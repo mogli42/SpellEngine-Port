@@ -1,0 +1,26 @@
+{
+  "parent": "rpg_series:root",
+  "criteria": {
+    "always": {
+      "trigger": "minecraft:tick"
+    }
+  },
+  "display": {
+    "announce_to_chat": false,
+    "description": {
+      "translate": "advancements.rpg_series.misc_items.description"
+    },
+    "icon": {
+      "id": "minecraft:chest"
+    },
+    "show_toast": false,
+    "title": {
+      "translate": "advancements.rpg_series.misc_items.title"
+    }
+  },
+  "requirements": [
+    [
+      "always"
+    ]
+  ]
+}

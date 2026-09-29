@@ -2,14 +2,13 @@ package net.spell_engine.fabric.datagen;
 
 import net.fabricmc.fabric.api.datagen.v1.DataGeneratorEntrypoint;
 import net.fabricmc.fabric.api.datagen.v1.FabricDataGenerator;
-import net.fabricmc.fabric.api.datagen.v1.FabricDataOutput;
-import net.fabricmc.fabric.api.datagen.v1.provider.FabricTagProvider;
-import net.minecraft.entity.EntityType;
-import net.minecraft.entity.damage.DamageType;
-import net.minecraft.entity.damage.DamageTypes;
-import net.minecraft.registry.RegistryKeys;
-import net.minecraft.registry.RegistryWrapper;
-import net.minecraft.registry.tag.DamageTypeTags;
+import net.fabricmc.fabric.api.datagen.v1.FabricPackOutput;
+import net.fabricmc.fabric.api.datagen.v1.provider.FabricTagsProvider;
+import net.minecraft.core.HolderLookup;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.tags.DamageTypeTags;
+import net.minecraft.world.damagesource.DamageType;
+import net.minecraft.world.damagesource.DamageTypes;
 import net.spell_engine.SpellEngineMod;
 import net.spell_engine.api.datagen.SimpleParticleGenerator;
 import net.spell_engine.api.datagen.SimpleSoundGeneratorV2;
@@ -17,6 +16,7 @@ import net.spell_engine.api.tags.SpellEngineDamageTypeTags;
 import net.spell_engine.api.tags.SpellEngineEntityTags;
 import net.spell_engine.fx.SpellEngineParticles;
 import net.spell_engine.fx.SpellEngineSounds;
+import net.spell_engine.rpg_series.datagen.RPGSeriesAdvancements;
 import net.spell_engine.rpg_series.datagen.RPGSeriesContent;
 
 import java.util.ArrayList;
@@ -33,11 +33,12 @@ public class SpellEngineDataGenerator implements DataGeneratorEntrypoint {
         pack.addProvider(RPGSeriesContent.EquipmentTagGen::new);
         pack.addProvider(RPGSeriesContent.WeaponSkillGen::new);
         pack.addProvider(RPGSeriesContent.LangGenerator::new);
+        pack.addProvider(RPGSeriesAdvancements::new);
         // TestDataGen.addTo(pack);
     }
 
     public static class ParticlesGen extends SimpleParticleGenerator {
-        public ParticlesGen(FabricDataOutput dataOutput, CompletableFuture<RegistryWrapper.WrapperLookup> registryLookup) {
+        public ParticlesGen(FabricPackOutput dataOutput, CompletableFuture<HolderLookup.Provider> registryLookup) {
             super(dataOutput, registryLookup);
         }
 
@@ -60,7 +61,7 @@ public class SpellEngineDataGenerator implements DataGeneratorEntrypoint {
     }
 
     public static class SoundGen extends SimpleSoundGeneratorV2 {
-        public SoundGen(FabricDataOutput dataOutput, CompletableFuture<RegistryWrapper.WrapperLookup> registryLookup) {
+        public SoundGen(FabricPackOutput dataOutput, CompletableFuture<HolderLookup.Provider> registryLookup) {
             super(dataOutput, registryLookup);
         }
 
@@ -75,16 +76,16 @@ public class SpellEngineDataGenerator implements DataGeneratorEntrypoint {
         }
     }
 
-    public static class DamageTypeTagGen extends FabricTagProvider<DamageType> {
-        public DamageTypeTagGen(FabricDataOutput output, CompletableFuture<RegistryWrapper.WrapperLookup> registriesFuture) {
-            super(output, RegistryKeys.DAMAGE_TYPE, registriesFuture);
+    public static class DamageTypeTagGen extends FabricTagsProvider<DamageType> {
+        public DamageTypeTagGen(FabricPackOutput output, CompletableFuture<HolderLookup.Provider> registriesFuture) {
+            super(output, Registries.DAMAGE_TYPE, registriesFuture);
         }
 
         @Override
-        protected void configure(RegistryWrapper.WrapperLookup wrapperLookup) {
-            getOrCreateTagBuilder(SpellEngineDamageTypeTags.EVADABLE)
+        protected void addTags(HolderLookup.Provider wrapperLookup) {
+            builder(SpellEngineDamageTypeTags.EVADABLE)
                     // .addTag(DamageTypeTags.IS_PROJECTILE)
-                    .addOptionalTag(DamageTypeTags.IS_PROJECTILE.id())
+                    .addOptionalTag(DamageTypeTags.IS_PROJECTILE)
                     .add(DamageTypes.PLAYER_ATTACK)
                     .add(DamageTypes.GENERIC)
                     .add(DamageTypes.MOB_ATTACK)
@@ -92,17 +93,17 @@ public class SpellEngineDataGenerator implements DataGeneratorEntrypoint {
         }
     }
 
-    public static class EntityTypeTagGen extends FabricTagProvider<EntityType<?>> {
-        public EntityTypeTagGen(FabricDataOutput output, CompletableFuture<RegistryWrapper.WrapperLookup> registriesFuture) {
-            super(output, RegistryKeys.ENTITY_TYPE, registriesFuture);
+    public static class EntityTypeTagGen extends FabricTagsProvider.EntityTypeTagsProvider {
+        public EntityTypeTagGen(FabricPackOutput output, CompletableFuture<HolderLookup.Provider> registriesFuture) {
+            super(output, registriesFuture);
         }
 
         @Override
-        protected void configure(RegistryWrapper.WrapperLookup wrapperLookup) {
+        protected void addTags(HolderLookup.Provider wrapperLookup) {
             SpellEngineEntityTags.Vulnerability.ALL.forEach(entry -> {
-                var builder = getOrCreateTagBuilder(entry.tag());
+                var builder = builder(entry.tag()); // 26.2: `valueLookupBuilder` removed
                 entry.included().forEach(tag -> {
-                    builder.addOptionalTag(tag.id());
+                    builder.addOptionalTag(tag);
                 });
             });
         }

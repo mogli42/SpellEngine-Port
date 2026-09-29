@@ -1,11 +1,12 @@
 package net.spell_engine.entity;
 
-import net.minecraft.client.model.ModelPart;
-import net.minecraft.client.render.entity.animation.Animation;
-import net.minecraft.client.render.entity.animation.Keyframe;
-import net.minecraft.client.render.entity.animation.Transformation;
-import net.minecraft.client.render.entity.model.SinglePartEntityModel;
-import net.minecraft.util.math.MathHelper;
+import org.joml.Vector3fc;
+import net.minecraft.client.animation.AnimationChannel;
+import net.minecraft.client.animation.AnimationDefinition;
+import net.minecraft.client.animation.Keyframe;
+import net.minecraft.client.model.Model;
+import net.minecraft.client.model.geom.ModelPart;
+import net.minecraft.util.Mth;
 import org.joml.Vector3f;
 
 import java.util.List;
@@ -22,7 +23,7 @@ public final class ModelAnimations {
 
     /**
      * Seamless-loop variant of vanilla
-     * {@link net.minecraft.client.render.entity.animation.AnimationHelper#animate}.
+     * {@link net.minecraft.client.animation.KeyframeAnimations#animate}.
      *
      * <p>Vanilla treats a looping clip's boundary like a dead end: at the segment touching the first
      * or last keyframe, catmull-rom <em>clamps</em> its outer neighbour ({@code max(0, start-1)} /
@@ -44,7 +45,7 @@ public final class ModelAnimations {
      * {@code limbSwing} to {@code runningTime} (as {@code (long)(limbSwing * 50F)}) and
      * {@code limbSwingAmount} to {@code scale}.
      */
-    public static void seamlessLoop(SinglePartEntityModel<?> model, Animation animation, long runningTime, float scale, Vector3f temp) {
+    public static void seamlessLoop(Model<?> model, AnimationDefinition animation, long runningTime, float scale, Vector3f temp) {
         float lengthSeconds = animation.lengthInSeconds();
         boolean looping = animation.looping();
         float f = runningTime / 1000.0F;
@@ -53,40 +54,49 @@ public final class ModelAnimations {
         }
         final float time = f;
 
-        for (Map.Entry<String, List<Transformation>> entry : animation.boneAnimations().entrySet()) {
-            List<Transformation> transformations = entry.getValue();
-            model.getChild(entry.getKey()).ifPresent(part -> {
-                for (Transformation transformation : transformations) {
-                    apply(part, transformation, time, looping, scale, temp);
-                }
-            });
+        for (Map.Entry<String, List<AnimationChannel>> entry : animation.boneAnimations().entrySet()) {
+            List<AnimationChannel> transformations = entry.getValue();
+            var part = findPart(model.root(), entry.getKey());
+            if (part == null) continue;
+            for (AnimationChannel transformation : transformations) {
+                apply(part, transformation, time, looping, scale, temp);
+            }
         }
     }
 
-    private static void apply(ModelPart part, Transformation transformation, float time, boolean looping, float scale, Vector3f temp) {
+    /// Depth-first lookup by name; ModelPart no longer exposes an Optional child getter
+    @org.jetbrains.annotations.Nullable
+    private static ModelPart findPart(ModelPart root, String name) {
+        for (var candidate : root.getAllParts()) {
+            if (candidate.hasChild(name)) return candidate.getChild(name);
+        }
+        return null;
+    }
+
+    private static void apply(ModelPart part, AnimationChannel transformation, float time, boolean looping, float scale, Vector3f temp) {
         Keyframe[] keyframes = transformation.keyframes();
         int last = keyframes.length - 1;
-        int i = Math.max(0, MathHelper.binarySearch(0, keyframes.length, index -> time <= keyframes[index].timestamp()) - 1);
+        int i = Math.max(0, Mth.binarySearch(0, keyframes.length, index -> time <= keyframes[index].timestamp()) - 1);
         int j = Math.min(last, i + 1);
         Keyframe from = keyframes[i];
         Keyframe to = keyframes[j];
         float delta = 0.0F;
         if (j != i) {
-            delta = MathHelper.clamp((time - from.timestamp()) / (to.timestamp() - from.timestamp()), 0.0F, 1.0F);
+            delta = Mth.clamp((time - from.timestamp()) / (to.timestamp() - from.timestamp()), 0.0F, 1.0F);
         }
 
         // Only the boundary segment of a looping clip diverges from vanilla; everything else is
         // interpolated exactly as authored (including LINEAR/CUBIC choice and vanilla's own clamping).
         boolean touchesSeam = looping && last >= 2 && (i == 0 || j == last);
         if (touchesSeam) {
-            Vector3f p0 = keyframes[i == 0 ? last - 1 : i - 1].target();       // wrap the pre-neighbour
-            Vector3f p1 = from.target();
-            Vector3f p2 = to.target();
-            Vector3f p3 = keyframes[j == last ? 1 : j + 1].target();           // wrap the post-neighbour
+            Vector3fc p0 = keyframes[i == 0 ? last - 1 : i - 1].postTarget();       // wrap the pre-neighbour
+            Vector3fc p1 = from.postTarget();
+            Vector3fc p2 = to.postTarget();
+            Vector3fc p3 = keyframes[j == last ? 1 : j + 1].postTarget();           // wrap the post-neighbour
             temp.set(
-                    MathHelper.catmullRom(delta, p0.x(), p1.x(), p2.x(), p3.x()) * scale,
-                    MathHelper.catmullRom(delta, p0.y(), p1.y(), p2.y(), p3.y()) * scale,
-                    MathHelper.catmullRom(delta, p0.z(), p1.z(), p2.z(), p3.z()) * scale
+                    Mth.catmullrom(delta, p0.x(), p1.x(), p2.x(), p3.x()) * scale,
+                    Mth.catmullrom(delta, p0.y(), p1.y(), p2.y(), p3.y()) * scale,
+                    Mth.catmullrom(delta, p0.z(), p1.z(), p2.z(), p3.z()) * scale
             );
         } else {
             to.interpolation().apply(temp, delta, keyframes, i, j, scale);

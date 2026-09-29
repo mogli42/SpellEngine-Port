@@ -1,8 +1,9 @@
 package net.spell_engine.api.effect;
 
-import net.minecraft.entity.LivingEntity;
-import net.minecraft.entity.effect.StatusEffect;
-import net.minecraft.entity.effect.StatusEffectInstance;
+import net.minecraft.world.effect.MobEffect;
+import net.minecraft.world.effect.MobEffectInstance;
+import net.minecraft.world.entity.LivingEntity;
+import net.spell_engine.internals.SpellEngineAttachments;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.HashMap;
@@ -20,7 +21,7 @@ public final class EntityTints {
     @FunctionalInterface
     public interface Tint {
         /// ARGB this effect contributes, `NEUTRAL` for none.
-        int argb(LivingEntity entity, StatusEffectInstance instance);
+        int argb(LivingEntity entity, MobEffectInstance instance);
 
         /// Constant color: the full `argb` at any stack count.
         static Tint flat(int argb) {
@@ -51,27 +52,27 @@ public final class EntityTints {
         return Math.round(0xFF + (target - 0xFF) * strength);
     }
 
-    private static final Map<StatusEffect, Tint> tints = new HashMap<>();
+    private static final Map<MobEffect, Tint> tints = new HashMap<>();
 
-    public static void register(StatusEffect statusEffect, Tint tint) {
+    public static void register(MobEffect statusEffect, Tint tint) {
         tints.put(statusEffect, tint);
     }
 
-    public static void register(StatusEffect statusEffect, int argb) {
+    public static void register(MobEffect statusEffect, int argb) {
         register(statusEffect, Tint.flat(argb));
     }
 
-    public static void register(StatusEffect statusEffect, int argb, float strengthPerStack) {
+    public static void register(MobEffect statusEffect, int argb, float strengthPerStack) {
         register(statusEffect, Tint.scaling(argb, strengthPerStack));
     }
 
     @Nullable
-    public static Tint tintOf(StatusEffect statusEffect) {
+    public static Tint tintOf(MobEffect statusEffect) {
         return tints.get(statusEffect);
     }
 
     /// The combined tint of all registered tinting effects active on `entity`, `NEUTRAL` if none
-    /// reach it. Runs server side; the result travels to clients as tracked data (see Provider).
+    /// reach it. Runs server side; the result travels to clients as a synced attachment (see currentTint).
     /// <p>
     /// Blend rule: componentwise multiply (each channel as 0–1, product across all active tints).
     /// Neutral-identity, commutative, associative — order of effects can't matter — and alphas
@@ -81,8 +82,8 @@ public final class EntityTints {
             return NEUTRAL;
         }
         int result = NEUTRAL;
-        for (var instance : entity.getStatusEffects()) {
-            var tint = tints.get(instance.getEffectType().value());
+        for (var instance : entity.getActiveEffects()) {
+            var tint = tints.get(instance.getEffect().value());
             if (tint != null) {
                 result = multiply(result, tint.argb(entity, instance));
             }
@@ -100,40 +101,11 @@ public final class EntityTints {
         return (alpha << 24) | (red << 16) | (green << 8) | blue;
     }
 
-    /// The entity's current blended tint, synced to all tracking clients via tracked data.
+    /// The entity's current blended tint, synced to all tracking clients as an entity attachment
+    /// (`SpellEngineAttachments.TINT_ARGB`, written whenever the server re-resolves the effect set).
+    /// Client side, `LivingEntityRenderer.updateRenderState` copies it onto the entity's render state
+    /// (`EntityRenderStateExtension.spellEngine_getTint`), which is what the render pass reads.
     public static int currentTint(LivingEntity entity) {
-        return ((Provider)entity).SpellEngine_entityTintArgb();
-    }
-
-    public interface Provider {
-        int SpellEngine_entityTintArgb();
-    }
-
-    /// Render-thread context: the tint of the living entity currently being rendered.
-    /// Set around `LivingEntityRenderer.render` so that `ModelPart` level color multiplication
-    /// (see ModelPartMixin) can apply without any renderer knowing about it.
-    public static final class Current {
-        private static int argb = NEUTRAL;
-
-        public static void set(int value) {
-            argb = value;
-        }
-
-        public static void clear() {
-            argb = NEUTRAL;
-        }
-
-        public static boolean isActive() {
-            return argb != NEUTRAL;
-        }
-
-        /// True when the active tint has alpha below 1, so the entity needs a blending-capable render layer.
-        public static boolean isTranslucent() {
-            return isActive() && (argb >>> 24) < 0xFF;
-        }
-
-        public static int apply(int color) {
-            return argb == NEUTRAL ? color : multiply(color, argb);
-        }
+        return SpellEngineAttachments.TINT_ARGB.get(entity);
     }
 }

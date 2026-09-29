@@ -1,16 +1,25 @@
-accessWidener	v2	named
-accessible    class    net/minecraft/entity/effect/PoisonStatusEffect
-accessible    class    net/minecraft/client/render/RenderLayer$MultiPhase
-accessible    method    net/minecraft/client/render/RenderLayer    of    (Ljava/lang/String;Lnet/minecraft/client/render/VertexFormat;Lnet/minecraft/client/render/VertexFormat$DrawMode;IZZLnet/minecraft/client/render/RenderLayer$MultiPhaseParameters;)Lnet/minecraft/client/render/RenderLayer$MultiPhase;
-accessible    method    net/minecraft/client/render/block/entity/BlockEntityRendererFactories    register    (Lnet/minecraft/block/entity/BlockEntityType;Lnet/minecraft/client/render/block/entity/BlockEntityRendererFactory;)V
+accessWidener	v2	official
+accessible	class	net/minecraft/world/effect/PoisonMobEffect
+accessible	method	net/minecraft/client/renderer/rendertype/RenderType	create	(Ljava/lang/String;Lnet/minecraft/client/renderer/rendertype/RenderSetup;)Lnet/minecraft/client/renderer/rendertype/RenderType;
+accessible	method	net/minecraft/client/renderer/blockentity/BlockEntityRenderers	register	(Lnet/minecraft/world/level/block/entity/BlockEntityType;Lnet/minecraft/client/renderer/blockentity/BlockEntityRendererProvider;)V
 # Loader-neutral replacement for Fabric API's PlayerLookup.tracking(Entity):
 # reach the vanilla entity-tracker listener set so common code can enumerate the
 # server players tracking an entity without depending on any loader networking API.
-accessible    field    net/minecraft/server/world/ServerChunkLoadingManager    entityTrackers    Lit/unimi/dsi/fastutil/ints/Int2ObjectMap;
-accessible    class    net/minecraft/server/world/ServerChunkLoadingManager$EntityTracker
-accessible    field    net/minecraft/server/world/ServerChunkLoadingManager$EntityTracker    listeners    Ljava/util/Set;
+accessible	field	net/minecraft/server/level/ChunkMap	entityMap	Lit/unimi/dsi/fastutil/ints/Int2ObjectMap;
+accessible	class	net/minecraft/server/level/ChunkMap$TrackedEntity
+accessible	field	net/minecraft/server/level/ChunkMap$TrackedEntity	seenBy	Ljava/util/Set;
 # NeoForge has no LootTable.Builder in its LootTableLoadEvent (it exposes a built LootTable), so the
 # NeoForge loot-modify path reads the loaded pools to report them as `existingPools()`.
-accessible    field    net/minecraft/loot/LootTable    pools    Ljava/util/List;
+accessible	field	net/minecraft/world/level/storage/loot/LootTable	pools	Ljava/util/List;
 # LootHelper.inspect reads pool entries (Fabric API widens this on Fabric; NeoForge needs our own AT)
-accessible    field    net/minecraft/loot/LootPool    entries    Ljava/util/List;
+accessible	field	net/minecraft/world/level/storage/loot/LootPool	entries	Ljava/util/List;
+# Vanilla BlockEntityType constructor is private since 1.21.2; used to create the spell binding block entity type
+accessible	method	net/minecraft/world/level/block/entity/BlockEntityType	<init>	(Lnet/minecraft/world/level/block/entity/BlockEntityType$BlockEntitySupplier;Ljava/util/Set;)V
+accessible	class	net/minecraft/world/level/block/entity/BlockEntityType$BlockEntitySupplier
+# Pipeline snippets to derive Spell Engine render pipelines from (blend/depth/cull variants of vanilla ones)
+accessible	field	net/minecraft/client/renderer/RenderPipelines	ENTITY_SNIPPET	Lcom/mojang/blaze3d/pipeline/RenderPipeline$Snippet;
+accessible	field	net/minecraft/client/renderer/RenderPipelines	ENTITY_EMISSIVE_SNIPPET	Lcom/mojang/blaze3d/pipeline/RenderPipeline$Snippet;
+accessible	field	net/minecraft/client/renderer/RenderPipelines	BEACON_BEAM_SNIPPET	Lcom/mojang/blaze3d/pipeline/RenderPipeline$Snippet;
+# Item glow: the glint program pipeline (core/glint) is rebuilt with additive blending (26.2: the matrices/fog
+# snippets became public `BindGroupLayouts` constants; only GLOBALS_SNIPPET is still private)
+accessible	field	net/minecraft/client/renderer/RenderPipelines	GLOBALS_SNIPPET	Lcom/mojang/blaze3d/pipeline/RenderPipeline$Snippet;

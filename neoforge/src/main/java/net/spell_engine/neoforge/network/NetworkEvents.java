@@ -1,7 +1,7 @@
 package net.spell_engine.neoforge.network;
 
-import net.minecraft.network.packet.CustomPayload;
-import net.minecraft.server.network.ServerPlayerEntity;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.network.configuration.ICustomConfigurationTask;
@@ -19,7 +19,7 @@ import java.util.function.Consumer;
 /// NeoForge networking entrypoint (mod bus): native payload registration via `PayloadRegistrar` and
 /// configuration tasks via `ICustomConfigurationTask`, with no Forgified Fabric API involved.
 /// Decoded packets are forwarded to the loader-agnostic {@link ServerNetwork}/{@link ClientNetwork}.
-@EventBusSubscriber(modid = SpellEngineMod.ID, bus = EventBusSubscriber.Bus.MOD)
+@EventBusSubscriber(modid = SpellEngineMod.ID)
 public class NetworkEvents {
     @SubscribeEvent
     public static void register(final RegisterConfigurationTasksEvent event) {
@@ -51,24 +51,24 @@ public class NetworkEvents {
 
         // Play stage — client → server
         registrar.playToServer(Packets.CastRequest.PACKET_ID, Packets.CastRequest.CODEC, (packet, context) -> {
-            var player = (ServerPlayerEntity) context.player();
-            ServerNetwork.handleCastRequest(packet, player.server, player);
+            var player = (ServerPlayer) context.player();
+            ServerNetwork.handleCastRequest(packet, player.level().getServer(), player);
         });
         registrar.playToServer(Packets.TargetStream.PACKET_ID, Packets.TargetStream.CODEC, (packet, context) -> {
-            var player = (ServerPlayerEntity) context.player();
-            ServerNetwork.handleTargetStream(packet, player.server, player);
+            var player = (ServerPlayer) context.player();
+            ServerNetwork.handleTargetStream(packet, player.level().getServer(), player);
         });
         registrar.playToServer(Packets.CastInput.PACKET_ID, Packets.CastInput.CODEC, (packet, context) -> {
-            var player = (ServerPlayerEntity) context.player();
-            ServerNetwork.handleCastInput(packet, player.server, player);
+            var player = (ServerPlayer) context.player();
+            ServerNetwork.handleCastInput(packet, player.level().getServer(), player);
         });
         registrar.playToServer(Packets.AttackPerform.PACKET_ID, Packets.AttackPerform.CODEC, (packet, context) -> {
-            var player = (ServerPlayerEntity) context.player();
-            ServerNetwork.handleAttackPerform(packet, player.server, player);
+            var player = (ServerPlayer) context.player();
+            ServerNetwork.handleAttackPerform(packet, player.level().getServer(), player);
         });
         registrar.playToServer(Packets.AttackFxBroadcast.PACKET_ID, Packets.AttackFxBroadcast.CODEC, (packet, context) -> {
-            var player = (ServerPlayerEntity) context.player();
-            ServerNetwork.handleAttackFxBroadcast(packet, player.server, player);
+            var player = (ServerPlayer) context.player();
+            ServerNetwork.handleAttackFxBroadcast(packet, player.level().getServer(), player);
         });
 
         // Play stage — server → client
@@ -89,29 +89,29 @@ public class NetworkEvents {
     }
 
     public record ConfigurationTask() implements ICustomConfigurationTask {
-        public static final Key KEY = new Key(ServerNetwork.CONFIG_TASK_NAME);
+        public static final Type KEY = new Type(ServerNetwork.CONFIG_TASK_NAME);
 
         @Override
-        public Key getKey() {
+        public Type type() {
             return KEY;
         }
 
         @Override
-        public void run(Consumer<CustomPayload> sender) {
+        public void run(Consumer<CustomPacketPayload> sender) {
             sender.accept(new Packets.ConfigSync(SpellEngineMod.config));
         }
     }
 
     public record SpellRegistrySyncTask() implements ICustomConfigurationTask {
-        public static final Key KEY = new Key(ServerNetwork.SPELL_REGISTRY_TASK_NAME);
+        public static final Type KEY = new Type(ServerNetwork.SPELL_REGISTRY_TASK_NAME);
 
         @Override
-        public Key getKey() {
+        public Type type() {
             return KEY;
         }
 
         @Override
-        public void run(Consumer<CustomPayload> sender) {
+        public void run(Consumer<CustomPacketPayload> sender) {
             sender.accept(new Packets.SpellRegistrySync(SpellAssignments.encoded));
         }
     }

@@ -1,17 +1,13 @@
 package net.spell_engine.mixin.loot;
 
-import net.minecraft.loot.entry.LeafEntry;
-import net.minecraft.loot.function.LootFunction;
+import net.minecraft.world.level.storage.loot.entries.UniformContainerBase;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.gen.Accessor;
 
-import java.util.List;
-
-@Mixin(LeafEntry.class)
+/// 26.3: weighted leaf entries (items, tags, table references) share `UniformContainerBase`
+/// (formerly `LootPoolSingletonContainer`); their functions moved up to `LootPoolEntryContainer#modifier`.
+@Mixin(UniformContainerBase.class)
 public interface LeafEntryAccessor {
     @Accessor("weight")
     int spellEngine_getWeight();
-
-    @Accessor("functions")
-    List<LootFunction> spellEngine_getFunctions();
 }

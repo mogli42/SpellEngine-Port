@@ -1,19 +1,19 @@
 package net.spell_engine.client.gui;
 
-import com.mojang.blaze3d.systems.RenderSystem;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.font.TextRenderer;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.network.ClientPlayerEntity;
-import net.minecraft.client.option.KeyBinding;
-import net.minecraft.client.render.RenderLayer;
-import net.minecraft.client.util.InputUtil;
-import net.minecraft.item.ItemStack;
-import net.minecraft.text.Text;
-import net.minecraft.util.Formatting;
-import net.minecraft.util.Identifier;
-import net.minecraft.util.math.MathHelper;
-import net.minecraft.util.math.Vec2f;
+import com.mojang.blaze3d.platform.InputConstants;
+import net.minecraft.ChatFormatting;
+import net.minecraft.client.KeyMapping;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.Font;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.client.renderer.RenderPipelines;
+import net.minecraft.network.chat.Component;
+import net.minecraft.resources.Identifier;
+import net.minecraft.util.ARGB;
+import net.minecraft.util.Mth;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.phys.Vec2;
 import net.spell_engine.SpellEngineMod;
 import net.spell_engine.client.SpellEngineClient;
 import net.spell_engine.client.input.SpellHotbar;
@@ -32,15 +32,29 @@ import java.util.stream.Collectors;
 import net.spell_engine.internals.SpellParameters;
 
 public class HudRenderHelper {
+    /** Id of the spell HUD element/layer registered with each loader's HUD registry (same id on both). */
+    public static final Identifier HUD_ELEMENT_ID = Identifier.fromNamespaceAndPath(SpellEngineMod.ID, "spell_hud");
 
-    public static void render(DrawContext context, float tickDelta) {
+    /**
+     * Body of the HUD element registered natively per loader (Fabric {@code HudElementRegistry},
+     * NeoForge {@code RegisterGuiLayersEvent}). Both register it after the boss bar — the last element of the
+     * main in-game HUD group — so it composites above every status bar, including the experience/info bar the
+     * default cast bar overlaps. Registering it earlier leaves the cast bar hidden under the experience bar.
+     */
+    public static void renderHudElement(GuiGraphicsExtractor context, float tickDelta) {
+        if (Minecraft.getInstance().gui.hud.isHidden()) { return; } // 26.2: `Options#hideGui` → `Hud#isHidden`
+        render(context, tickDelta);
+    }
+
+
+    public static void render(GuiGraphicsExtractor context, float tickDelta) {
         render(context, tickDelta, false);
     }
 
-    public static void render(DrawContext context, float tickDelta, boolean config) {
+    public static void render(GuiGraphicsExtractor context, float tickDelta, boolean config) {
         var hudConfig = SpellEngineClient.hudConfig.value;
-        MinecraftClient client = MinecraftClient.getInstance();
-        ClientPlayerEntity player = client.player;
+        Minecraft client = Minecraft.getInstance();
+        LocalPlayer player = client.player;
 
         if ((player == null || player.isSpectator())
                 && !config) {
@@ -69,12 +83,12 @@ public class HudRenderHelper {
                 var cooldownManager = caster.getCooldownManager();
                 var spells = SpellHotbar.INSTANCE.slots.stream().map(slot -> {
                     var spellEntry = slot.spell();
-                    var id = spellEntry != null ? spellEntry.getKey().get().getValue() : null;
+                    var id = spellEntry != null ? spellEntry.unwrapKey().get().identifier() : null;
                     var itemStack = slot.itemStack();
                     var useItem = itemStack != null;
                     var cooldownProgress = 0F;
                     if (useItem) {
-                        cooldownProgress = player.getItemCooldownManager().getCooldownProgress(itemStack.getItem(), tickDelta);
+                        cooldownProgress = player.getCooldowns().getCooldownPercent(itemStack, tickDelta);
                     } else if (spellEntry != null) {
                         cooldownProgress = cooldownManager.getCooldownProgress(spellEntry, tickDelta);
                     }
@@ -112,8 +126,8 @@ public class HudRenderHelper {
             }
         }
 
-        var screenWidth = client.getWindow().getScaledWidth();
-        var screenHeight = client.getWindow().getScaledHeight();
+        var screenWidth = client.getWindow().getGuiScaledWidth();
+        var screenHeight = client.getWindow().getGuiScaledHeight();
         var originPoint = hudConfig.castbar.base.origin.getPoint(screenWidth, screenHeight);
         var baseOffset = originPoint.add(hudConfig.castbar.base.offset);
         if (castBarViewModel != null) {
@@ -138,23 +152,17 @@ public class HudRenderHelper {
     }
 
     public static class TargetWidget {
-        public static void render(DrawContext context, float tickDelta, Vec2f starting, ViewModel viewModel) {
-            MinecraftClient client = MinecraftClient.getInstance();
-            var textRenderer = client.inGameHud.getTextRenderer();
+        public static void render(GuiGraphicsExtractor context, float tickDelta, Vec2 starting, ViewModel viewModel) {
+            Minecraft client = Minecraft.getInstance();
+            var textRenderer = client.font;
 
-            int textWidth = textRenderer.getWidth(viewModel.text);
+            int textWidth = textRenderer.width(viewModel.text);
 
             int x = (int) (starting.x - (textWidth / 2F));
             int y = (int) starting.y;
             int opacity = 255;
-
-            RenderSystem.enableBlend();
-            RenderSystem.defaultBlendFunc();
-            context.setShaderColor(1.0F, 1.0F, 1.0F, 1.0F);
-            context.fill(x - 2, y - 2, x + textWidth + 2, y + textRenderer.fontHeight + 2, client.options.getTextBackgroundColor(0));
-            context.drawTextWithShadow(textRenderer, viewModel.text, x, y, 0xFFFFFF);
-            RenderSystem.disableBlend();
-            context.setShaderColor(1.0F, 1.0F, 1.0F, 1.0F);
+            context.fill(x - 2, y - 2, x + textWidth + 2, y + textRenderer.lineHeight + 2, client.options.getBackgroundColor(0));
+            context.text(textRenderer, viewModel.text, x, y, 0xFFFFFFFF); // ARGB: alpha required since 1.21.11
         }
 
         public record ViewModel(String text) {
@@ -162,7 +170,7 @@ public class HudRenderHelper {
                 return new ViewModel("Target name");
             }
 
-            public static ViewModel from(ClientPlayerEntity player) {
+            public static ViewModel from(LocalPlayer player) {
                 var caster = (SpellCaster.Client)player;
                 var targets = caster.getCurrentTargets();
                 var text = targets.size() == 1
@@ -180,65 +188,54 @@ public class HudRenderHelper {
         private static final int textureWidth = 182;
         private static final int textureHeight = 10;
         private static final int barHeight = textureHeight / 2;
-        private static final Identifier CAST_BAR = Identifier.of(SpellEngineMod.ID, "textures/hud/castbar.png");
+        private static final Identifier CAST_BAR = Identifier.fromNamespaceAndPath(SpellEngineMod.ID, "textures/hud/castbar.png");
         private static final int spellIconSize = 16;
 
         public record ViewModel(int color, float progress, float castDuration, Identifier iconTexture, boolean allowTickDelta, boolean reverse) {
             public static ViewModel mock() {
-                return new ViewModel(0xFF3300, 0.5F, 1, SpellRender.iconTexture(Identifier.of("spell_engine", "dummy_spell")), false, false);
+                return new ViewModel(0xFF3300, 0.5F, 1, SpellRender.iconTexture(Identifier.fromNamespaceAndPath("spell_engine", "dummy_spell")), false, false);
             }
         }
 
-        public static void render(DrawContext context, float tickDelta, HudConfig hudConfig, Vec2f starting, ViewModel viewModel) {
+        public static void render(GuiGraphicsExtractor context, float tickDelta, HudConfig hudConfig, Vec2 starting, ViewModel viewModel) {
             var barWidth = hudConfig.castbar.width;
             var totalWidth = barWidth + minWidth;
             var totalHeight = barHeight;
             int x = (int) (starting.x - (totalWidth / 2));
             int y = (int) (starting.y - (totalHeight / 2));
-            lastRendered = new Rect(new Vec2f(x,y), new Vec2f(x + totalWidth,y + totalHeight));
+            lastRendered = new Rect(new Vec2(x,y), new Vec2(x + totalWidth,y + totalHeight));
 
-            RenderSystem.enableBlend();
-            RenderSystem.defaultBlendFunc();
+            int barColor = ARGB.color(255, (viewModel.color >> 16) & 0xFF, (viewModel.color >> 8) & 0xFF, viewModel.color & 0xFF);
 
-            float red = ((float) ((viewModel.color >> 16) & 0xFF)) / 255F;
-            float green = ((float) ((viewModel.color >> 8) & 0xFF)) / 255F;
-            float blue = ((float) (viewModel.color & 0xFF)) / 255F;
-
-            context.setShaderColor(red, green, blue, 1F);
-
-            renderBar(context, barWidth, true, 1, x, y);
+            renderBar(context, barWidth, true, 1, x, y, barColor);
             float partialProgress = 0;
             if (viewModel.allowTickDelta && viewModel.castDuration > 0) {
                 partialProgress = tickDelta / viewModel.castDuration;
             }
             var progress = viewModel.reverse() ? (1F - viewModel.progress - partialProgress) : (viewModel.progress + partialProgress);
-            renderBar(context, barWidth, false, progress, x, y);
-            context.setShaderColor(1.0F, 1.0F, 1.0F, 1.0F);
-
+            renderBar(context, barWidth, false, progress, x, y, barColor);
             if (hudConfig.castbar.icon.visible && viewModel.iconTexture != null) {
                 x = (int) (starting.x + hudConfig.castbar.icon.offset.x);
                 y = (int) (starting.y + hudConfig.castbar.icon.offset.y);
 
-                context.drawTexture(viewModel.iconTexture, x, y, 0, 0, spellIconSize, spellIconSize, spellIconSize, spellIconSize);
+                context.blit(RenderPipelines.GUI_TEXTURED, viewModel.iconTexture, x, y, 0, 0, spellIconSize, spellIconSize, spellIconSize, spellIconSize);
             }
-
-            RenderSystem.disableBlend();
         }
 
-        private static void renderBar(DrawContext context, int barWidth, boolean isBackground, float progress, int x, int y) {
+        private static void renderBar(GuiGraphicsExtractor context, int barWidth, boolean isBackground, float progress, int x, int y, int color) {
             var totalWidth = barWidth + minWidth;
             var centerWidth = totalWidth - minWidth;
             float leftRenderBegin = 0;
             float centerRenderBegin = tailWidth;
             float rightRenderBegin = totalWidth - tailWidth;
 
-            renderBarPart(context, isBackground, PART.LEFT, progress, leftRenderBegin, tailWidth, x, y, totalWidth);
-            renderBarPart(context, isBackground, PART.CENTER, progress, centerRenderBegin, centerRenderBegin + centerWidth, x, y, totalWidth);
-            renderBarPart(context, isBackground, PART.RIGHT, progress, rightRenderBegin, totalWidth, x, y, totalWidth);
+            renderBarPart(context, isBackground, PART.LEFT, progress, leftRenderBegin, tailWidth, x, y, totalWidth, color);
+            renderBarPart(context, isBackground, PART.CENTER, progress, centerRenderBegin, centerRenderBegin + centerWidth, x, y, totalWidth, color);
+            renderBarPart(context, isBackground, PART.RIGHT, progress, rightRenderBegin, totalWidth, x, y, totalWidth, color);
         }
 
         enum PART { LEFT, CENTER, RIGHT }
-        private static void renderBarPart(DrawContext context, boolean isBackground, PART part, float progress, float renderBegin, float renderEnd, int x, int y, float totalWidth) {
+        private static void renderBarPart(GuiGraphicsExtractor context, boolean isBackground, PART part, float progress, float renderBegin, float renderEnd, int x, int y, float totalWidth, int color) {
             var u = 0;
             var partMaxWidth = renderEnd - renderBegin; //5
             var progressRange = (renderEnd - renderBegin) / totalWidth; //0.05
@@ -261,26 +258,26 @@ public class HudRenderHelper {
                 }
             }
             int v = isBackground ? 0 : barHeight;
-            context.drawTexture(CAST_BAR, (int) (x + renderBegin), y, u, v, width, barHeight, textureWidth, textureHeight);
+            context.blit(RenderPipelines.GUI_TEXTURED, CAST_BAR, (int) (x + renderBegin), y, u, v, width, barHeight, textureWidth, textureHeight, color);
             // DrawableHelper.drawTexture(matrixStack, (int) (x + renderBegin), y, u, v, width, barHeight, textureWidth, textureHeight);
         }
     }
 
     public class SpellHotBarWidget {
         public static Rect lastRendered;
-        private static final TextureFile HOTBAR = new TextureFile(Identifier.of("textures/gui/sprites/hud/hotbar.png"), 182, 22);
+        private static final TextureFile HOTBAR = new TextureFile(Identifier.parse("textures/gui/sprites/hud/hotbar.png"), 182, 22);
         private static final int slotHeight = 22;
         private static final int slotWidth = 20;
 
         private static final Map<Integer, String> customHudKeyLabels = Map.of(
-                InputUtil.GLFW_KEY_LEFT_ALT, "Al",
-                InputUtil.GLFW_KEY_RIGHT_ALT, "Al",
-                InputUtil.GLFW_KEY_LEFT_SHIFT, "↑",
-                InputUtil.GLFW_KEY_RIGHT_SHIFT, "↑"
+                InputConstants.KEY_LALT, "Al",
+                InputConstants.KEY_RALT, "Al",
+                InputConstants.KEY_LSHIFT, "↑",
+                InputConstants.KEY_RSHIFT, "↑"
         );
 
         public record KeyBindingViewModel(String label, @Nullable Drawable.Component drawable) {
-            public static KeyBindingViewModel from(@Nullable KeyBinding keyBinding) {
+            public static KeyBindingViewModel from(@Nullable KeyMapping keyBinding) {
                 if (keyBinding == null) {
                     return new KeyBindingViewModel("", null);
                 }
@@ -290,22 +287,22 @@ public class HudRenderHelper {
                 if (drawable != null) {
                     return new KeyBindingViewModel("", drawable);
                 }
-                var customLabel = customHudKeyLabels.get(boundKey.getCode());
+                var customLabel = customHudKeyLabels.get(boundKey.getValue());
                 if (customLabel != null) {
                     return new KeyBindingViewModel(customLabel, null);
                 }
-                var label = keyBinding.getBoundKeyLocalizedText()
+                var label = keyBinding.getTranslatedKeyMessage()
                         .getString()
                         .toUpperCase(Locale.US);
                 label = acronym(label, 3);
                 return new KeyBindingViewModel(label, null);
             }
 
-            public int width(TextRenderer textRenderer) {
+            public int width(Font textRenderer) {
                 if (drawable != null) {
                     return drawable.draw().width();
                 } else {
-                    return textRenderer.getWidth(label);
+                    return textRenderer.width(label);
                 }
             }
         }
@@ -329,9 +326,9 @@ public class HudRenderHelper {
             public static ViewModel mock() {
                 return new ViewModel(
                         List.of(
-                                new SpellViewModel(SpellRender.iconTexture(Identifier.of(SpellEngineMod.ID, "dummy_spell")), null, 0, new KeyBindingViewModel("1", null), null),
-                                new SpellViewModel(SpellRender.iconTexture(Identifier.of(SpellEngineMod.ID, "dummy_spell")), null, 0, new KeyBindingViewModel("2", null), null),
-                                new SpellViewModel(SpellRender.iconTexture(Identifier.of(SpellEngineMod.ID, "dummy_spell")), null, 0, new KeyBindingViewModel("3", null), null)
+                                new SpellViewModel(SpellRender.iconTexture(Identifier.fromNamespaceAndPath(SpellEngineMod.ID, "dummy_spell")), null, 0, new KeyBindingViewModel("1", null), null),
+                                new SpellViewModel(SpellRender.iconTexture(Identifier.fromNamespaceAndPath(SpellEngineMod.ID, "dummy_spell")), null, 0, new KeyBindingViewModel("2", null), null),
+                                new SpellViewModel(SpellRender.iconTexture(Identifier.fromNamespaceAndPath(SpellEngineMod.ID, "dummy_spell")), null, 0, new KeyBindingViewModel("3", null), null)
                         )
                 );
             }
@@ -343,10 +340,10 @@ public class HudRenderHelper {
             }
         }
 
-        public static void render(DrawContext context, int screenWidth, int screenHeight, ViewModel viewModel) {
+        public static void render(GuiGraphicsExtractor context, int screenWidth, int screenHeight, ViewModel viewModel) {
             var config = SpellEngineClient.hudConfig.value.hotbar;
-            MinecraftClient client = MinecraftClient.getInstance();
-            var textRenderer = client.inGameHud.getTextRenderer();
+            Minecraft client = Minecraft.getInstance();
+            var textRenderer = client.font;
             if (viewModel.spells.isEmpty()) {
                 return;
             }
@@ -355,41 +352,31 @@ public class HudRenderHelper {
             var origin = config.origin
                     .getPoint(screenWidth, screenHeight)
                     .add(config.offset)
-                    .add(new Vec2f(estimatedWidth * (-0.5F), estimatedHeight * (-0.5F))); // Grow from center
-            lastRendered = new Rect(origin, origin.add(new Vec2f(estimatedWidth, estimatedHeight)));
-
-            RenderSystem.enableBlend();
-            RenderSystem.defaultBlendFunc();
-
+                    .add(new Vec2(estimatedWidth * (-0.5F), estimatedHeight * (-0.5F))); // Grow from center
+            lastRendered = new Rect(origin, origin.add(new Vec2(estimatedWidth, estimatedHeight)));
             // float barOpacity = (SpellEngineClient.config.indicateActiveHotbar && InputHelper.isLocked) ? 1F : 0.5F;
             float barOpacity = 1F;
 
             // Background
-            context.setShaderColor(1.0f, 1.0f, 1.0f, barOpacity);
-            context.drawTexture(HOTBAR.id(), (int) (origin.x), (int) (origin.y), 0, 0, slotWidth / 2, slotHeight, HOTBAR.width(), HOTBAR.height());
+            context.blit(RenderPipelines.GUI_TEXTURED, HOTBAR.id(), (int) (origin.x), (int) (origin.y), 0, 0, slotWidth / 2, slotHeight, HOTBAR.width(), HOTBAR.height());
             int middleElements = viewModel.spells.size() - 1;
             for (int i = 0; i < middleElements; i++) {
-                context.drawTexture(HOTBAR.id(), (int) (origin.x) + (slotWidth / 2) + (i * slotWidth), (int) (origin.y), slotWidth / 2, 0, slotWidth, slotHeight, HOTBAR.width(), HOTBAR.height());
+                context.blit(RenderPipelines.GUI_TEXTURED, HOTBAR.id(), (int) (origin.x) + (slotWidth / 2) + (i * slotWidth), (int) (origin.y), slotWidth / 2, 0, slotWidth, slotHeight, HOTBAR.width(), HOTBAR.height());
             }
-            context.drawTexture(HOTBAR.id(), (int) (origin.x) + (slotWidth / 2) + (middleElements * slotWidth), (int) (origin.y), 170, 0, (slotHeight / 2) + 1, slotHeight, HOTBAR.width(), HOTBAR.height());
+            context.blit(RenderPipelines.GUI_TEXTURED, HOTBAR.id(), (int) (origin.x) + (slotWidth / 2) + (middleElements * slotWidth), (int) (origin.y), 170, 0, (slotHeight / 2) + 1, slotHeight, HOTBAR.width(), HOTBAR.height());
 
             // Icons
-            context.setShaderColor(1.0f, 1.0f, 1.0f, 1.0F);
-            var iconsOffset = new Vec2f(3,3);
+            var iconsOffset = new Vec2(3,3);
             int iconSize = 16;
             for (int i = 0; i < viewModel.spells.size(); i++) {
                 var spell = viewModel.spells.get(i);
                 int x = (int) (origin.x + iconsOffset.x) + ((slotWidth) * i);
                 int y = (int) (origin.y + iconsOffset.y);
-
-
-                RenderSystem.enableBlend();
-
                 // Icon
                 if (spell.iconId != null) {
-                    context.drawTexture(spell.iconId, x, y, 0, 0, iconSize, iconSize, iconSize, iconSize);
+                    context.blit(RenderPipelines.GUI_TEXTURED, spell.iconId, x, y, 0, 0, iconSize, iconSize, iconSize, iconSize);
                 } else if (spell.itemStack != null) {
-                    context.drawItem(spell.itemStack, x, y);
+                    context.item(spell.itemStack, x, y);
                 }
 
                 // Cooldown
@@ -417,17 +404,14 @@ public class HudRenderHelper {
                     }
                 }
             }
-
-            RenderSystem.disableBlend();
-            context.setShaderColor(1.0F, 1.0F, 1.0F, 1.0F);
         }
 
-        private static void drawKeybinding(DrawContext context, TextRenderer textRenderer, KeyBindingViewModel keybinding, int x, int y,
+        private static void drawKeybinding(GuiGraphicsExtractor context, Font textRenderer, KeyBindingViewModel keybinding, int x, int y,
                                            Drawable.Anchor horizontalAnchor, Drawable.Anchor verticalAnchor) {
             if (keybinding.drawable != null) {
                 keybinding.drawable.draw(context, x, y, horizontalAnchor, verticalAnchor);
             } else {
-                var textLength = textRenderer.getWidth(keybinding.label);
+                var textLength = textRenderer.width(keybinding.label);
                 var xOffset = 0;
                 switch (horizontalAnchor) {
                     case TRAILING -> xOffset = -textLength / 2;
@@ -438,43 +422,41 @@ public class HudRenderHelper {
                 HudKeyVisuals.buttonLeading.draw(context, x - (textLength / 2), y, Drawable.Anchor.TRAILING, verticalAnchor);
                 HudKeyVisuals.buttonCenter.drawFlexibleWidth(context, x - (textLength / 2), y, textLength, verticalAnchor);
                 HudKeyVisuals.buttonTrailing.draw(context, x + (textLength / 2), y, Drawable.Anchor.LEADING, verticalAnchor);
-                context.drawCenteredTextWithShadow(textRenderer, keybinding.label, x, y - 10, 0xFFFFFF);
+                context.centeredText(textRenderer, keybinding.label, x, y - 10, 0xFFFFFFFF); // ARGB: alpha required since 1.21.11
             }
         }
 
-        private static void renderCooldown(DrawContext context, float progress, int x, int y) {
+        private static void renderCooldown(GuiGraphicsExtractor context, float progress, int x, int y) {
             // Copied from DrawContext.drawItemInSlot
-            var k = y + MathHelper.floor(16.0F * (1.0F - progress));
-            var l = k + MathHelper.ceil(16.0F * progress);
-            context.fill(RenderLayer.getGuiOverlay(), x, k, x + 16, l, Integer.MAX_VALUE);
-            RenderSystem.enableBlend();
-            RenderSystem.defaultBlendFunc();
+            var k = y + Mth.floor(16.0F * (1.0F - progress));
+            var l = k + Mth.ceil(16.0F * progress);
+            context.fill(RenderPipelines.GUI, x, k, x + 16, l, Integer.MAX_VALUE);
         }
     }
 
     public static class ErrorMessageWidget {
         public static Rect lastRendered;
 
-        public record ViewModel(Text message, float opacity) {
+        public record ViewModel(Component message, float opacity) {
             public static ViewModel mock() {
-                return new ViewModel(Text.literal("Error Message!").formatted(Formatting.RED), 1F);
+                return new ViewModel(Component.literal("Error Message!").withStyle(ChatFormatting.RED), 1F);
             }
 
-            public static ViewModel from(Text message, int durationLeft, int fadeOut, float tickDelta) {
+            public static ViewModel from(Component message, int durationLeft, int fadeOut, float tickDelta) {
                 float tick = ((float)durationLeft) - tickDelta;
                 float opacity = tick > fadeOut ? 1F : (tick / fadeOut);
                 return new ViewModel(message, opacity);
             }
         }
 
-        public static void render(DrawContext context, HudConfig hudConfig, int screenWidth, int screenHeight, ViewModel viewModel) {
+        public static void render(GuiGraphicsExtractor context, HudConfig hudConfig, int screenWidth, int screenHeight, ViewModel viewModel) {
             int alpha = (int) (viewModel.opacity * 255);
             if (alpha < 10) { return; }
             // System.out.println("Rendering opacity: " + viewModel.opacity + " alpha: " + alpha);
-            MinecraftClient client = MinecraftClient.getInstance();
-            var textRenderer = client.inGameHud.getTextRenderer();
-            int textWidth = textRenderer.getWidth(viewModel.message);
-            int textHeight = textRenderer.fontHeight;
+            Minecraft client = Minecraft.getInstance();
+            var textRenderer = client.font;
+            int textWidth = textRenderer.width(viewModel.message);
+            int textHeight = textRenderer.lineHeight;
             var config = hudConfig.error_message;
             var origin = config.origin
                     .getPoint(screenWidth, screenHeight)
@@ -482,12 +464,9 @@ public class HudRenderHelper {
 
             int x = (int) (origin.x - (textWidth / 2F));
             int y = (int) origin.y;
-            lastRendered = new Rect(new Vec2f(x ,y), new Vec2f(x + textWidth,y + textHeight));
-            RenderSystem.enableBlend();
-            RenderSystem.defaultBlendFunc();
-            context.fill(x - 2, y - 2, x + textWidth + 2, y + textRenderer.fontHeight + 2, client.options.getTextBackgroundColor(0));
-            context.drawTextWithShadow(textRenderer, viewModel.message(), x, y, 0xFFFFFF + (alpha << 24)); // color is ARGB
-            RenderSystem.disableBlend();
+            lastRendered = new Rect(new Vec2(x ,y), new Vec2(x + textWidth,y + textHeight));
+            context.fill(x - 2, y - 2, x + textWidth + 2, y + textRenderer.lineHeight + 2, client.options.getBackgroundColor(0));
+            context.text(textRenderer, viewModel.message(), x, y, 0xFFFFFF + (alpha << 24)); // color is ARGB
         }
     }
 }

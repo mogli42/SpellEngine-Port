@@ -1,6 +1,6 @@
 package net.spell_engine.neoforge;
 
-import net.minecraft.registry.RegistryKeys;
+import net.minecraft.core.registries.Registries;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.common.Mod;
 
@@ -20,6 +20,7 @@ public final class NeoForgeMod {
     public NeoForgeMod(IEventBus modBus) {
         // Run our common setup.
         SpellEngineMod.init();
+        PlatformEventsImpl.registerShieldBlockBridge();
         NeoForgeCompatFeatures.init();
         modBus.addListener(RegisterEvent.class, NeoForgeMod::register);
         // Summoned-entity default attributes are buffered by content mods during entity registration
@@ -37,27 +38,29 @@ public final class NeoForgeMod {
     }
 
     public static void register(RegisterEvent event) {
-        event.register(RegistryKeys.ENTITY_TYPE, reg -> {
+        // Synced entity attachments created during common init (see SpellEngineAttachments).
+        NeoForgeSyncedEntityData.onRegister(event);
+        event.register(Registries.ENTITY_TYPE, reg -> {
             SpellEngineMod.registerEntityTypes();
         });
-        event.register(RegistryKeys.PARTICLE_TYPE, reg -> {
+        event.register(Registries.PARTICLE_TYPE, reg -> {
             SpellEngineParticles.register();
         });
-        event.register(RegistryKeys.STATUS_EFFECT, reg -> {
+        event.register(Registries.MOB_EFFECT, reg -> {
             SpellEngineEffects.register();
         });
-        event.register(RegistryKeys.ITEM, reg -> {
+        event.register(Registries.ITEM, reg -> {
             SpellEngineItems.register();
         });
-        event.register(RegistryKeys.SOUND_EVENT, reg -> {
+        event.register(Registries.SOUND_EVENT, reg -> {
             SpellEngineSounds.register();
         });
-        event.register(RegistryKeys.BLOCK, reg -> {
+        event.register(Registries.BLOCK, reg -> {
             // Warning this registers not only blocks!
             // May cause issues, cba for now :)
             SpellEngineMod.registerSpellBinding();
         });
-        event.register(RegistryKeys.CRITERION, reg -> {
+        event.register(Registries.TRIGGER_TYPE, reg -> {
             SpellEngineMod.registerCriteria();
         });
     }

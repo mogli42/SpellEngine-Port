@@ -3,24 +3,27 @@ package net.spell_engine.rpg_series.loot;
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.MapCodec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
-import net.minecraft.item.Item;
-import net.minecraft.item.ItemStack;
-import net.minecraft.loot.LootChoice;
-import net.minecraft.loot.LootTableReporter;
-import net.minecraft.loot.condition.LootCondition;
-import net.minecraft.loot.context.LootContext;
-import net.minecraft.loot.entry.ItemEntry;
-import net.minecraft.loot.entry.LootPoolEntry;
-import net.minecraft.loot.entry.LootPoolEntryType;
-import net.minecraft.loot.entry.LootPoolEntryTypes;
-import net.minecraft.registry.tag.TagKey;
-import net.minecraft.util.Identifier;
+import net.minecraft.core.Holder;
+import net.minecraft.resources.Identifier;
+import net.minecraft.tags.TagKey;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.storage.loot.LootContext;
+import net.minecraft.world.level.storage.loot.ValidationContext;
+import net.minecraft.world.level.storage.loot.entries.CompositeEntryBase;
+import net.minecraft.world.level.storage.loot.entries.LootItem;
+import net.minecraft.world.level.storage.loot.entries.LootPoolEntries;
+import net.minecraft.world.level.storage.loot.entries.LootPoolEntry;
+import net.minecraft.world.level.storage.loot.entries.LootPoolEntryContainer;
+import net.minecraft.world.level.storage.loot.functions.LootItemFunction;
+import net.minecraft.world.level.storage.loot.predicates.LootItemCondition;
 import net.spell_engine.SpellEngineMod;
 import net.spell_engine.mixin.loot.ItemEntryAccessor;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Consumer;
 
@@ -31,70 +34,69 @@ import java.util.function.Consumer;
 /// When affiliated, weights are multiplied by {@link #WEIGHT_SCALE} for precision. The affiliation
 /// depends on the loot context only, so every group of a pool scales (or not) together -
 /// a pool using this entry type should consist of this entry type only.
-public class AffiliationGroupEntry extends LootPoolEntry {
-    public static final Identifier ID = Identifier.of(SpellEngineMod.ID, "affiliation_group");
+public class AffiliationGroupEntry extends LootPoolEntryContainer {
+    public static final Identifier ID = Identifier.fromNamespaceAndPath(SpellEngineMod.ID, "affiliation_group");
     public static final int WEIGHT_SCALE = 100;
 
     private static final Codec<LootConfig.Behavior.WeightOperation> OPERATION_CODEC = Codec.STRING.xmap(
             name -> LootConfig.Behavior.WeightOperation.valueOf(name.toUpperCase(Locale.ROOT)),
             operation -> operation.name().toLowerCase(Locale.ROOT));
 
+    /// Registered into `BuiltInRegistries.LOOT_POOL_ENTRY_TYPE` (entry types are their codecs since 1.21.2)
     public static final MapCodec<AffiliationGroupEntry> CODEC = RecordCodecBuilder.mapCodec(
             instance -> instance.group(
-                            LootPoolEntryTypes.CODEC.listOf().optionalFieldOf("children", List.of()).forGetter(entry -> entry.children),
+                            LootPoolEntries.CODEC.listOf().optionalFieldOf("children", List.of()).forGetter(entry -> entry.children),
                             Codec.FLOAT.optionalFieldOf("extra_weight", 1F).forGetter(entry -> entry.extraWeight),
                             OPERATION_CODEC.optionalFieldOf("operation", LootConfig.Behavior.WeightOperation.MULTIPLY).forGetter(entry -> entry.operation),
                             Codec.BOOL.optionalFieldOf("include_team", true).forGetter(entry -> entry.includeTeam)
                     )
-                    .and(addConditionsField(instance).t1())
+                    .and(commonFields(instance))
                     .apply(instance, AffiliationGroupEntry::new)
     );
-    public static final LootPoolEntryType TYPE = new LootPoolEntryType(CODEC);
 
-    private final List<LootPoolEntry> children;
+    private final List<LootPoolEntryContainer> children;
     private final float extraWeight;
     private final LootConfig.Behavior.WeightOperation operation;
     private final boolean includeTeam;
 
-    private AffiliationGroupEntry(List<LootPoolEntry> children, float extraWeight, LootConfig.Behavior.WeightOperation operation,
-                                  boolean includeTeam, List<LootCondition> conditions) {
-        super(conditions);
+    private AffiliationGroupEntry(List<LootPoolEntryContainer> children, float extraWeight, LootConfig.Behavior.WeightOperation operation,
+                                  boolean includeTeam, Optional<Holder<LootItemCondition>> condition,
+                                  Optional<Holder<LootItemFunction>> modifier) {
+        super(condition, modifier);
         this.children = children;
         this.extraWeight = Math.max(extraWeight, 0);
         this.operation = operation;
         this.includeTeam = includeTeam;
     }
 
-    public List<LootPoolEntry> children() {
+    public List<LootPoolEntryContainer> children() {
         return children;
     }
 
     @Override
-    public LootPoolEntryType getType() {
-        return TYPE;
+    public MapCodec<AffiliationGroupEntry> codec() {
+        return CODEC;
     }
 
     @Override
-    public void validate(LootTableReporter reporter) {
-        super.validate(reporter);
+    public void validate(ValidationContext context) {
+        super.validate(context);
         if (this.children.isEmpty()) {
-            reporter.report("Empty children list");
+            context.reportProblem(CompositeEntryBase.NO_CHILDREN_PROBLEM);
         }
         for (int i = 0; i < this.children.size(); i++) {
-            this.children.get(i).validate(reporter.makeChild(".entry[" + i + "]"));
+            this.children.get(i).validate(context.forIndexedField("children", i));
         }
     }
 
+    /// Conditions and the modifier function are applied by `LootPoolEntryContainer#expand`.
     @Override
-    public boolean expand(LootContext context, Consumer<LootChoice> choiceConsumer) {
-        if (!this.test(context)) {
-            return false;
-        }
+    protected boolean expandRaw(LootContext context, Consumer<LootPoolEntry> output) {
         var affiliation = ClassAffiliation.resolve(context, includeTeam);
         if (affiliation.isEmpty()) {
             // Affiliation cannot be determined, configured weights as is
             for (var child: children) {
-                child.expand(context, choiceConsumer);
+                child.expand(context, output);
             }
             return true;
         }
@@ -124,27 +126,27 @@ public class AffiliationGroupEntry extends LootPoolEntry {
         for (var choice: choices) {
             if (choice.weight <= 0) { continue; }
             var weight = Math.max(1, Math.round(choice.weight * normalize));
-            choiceConsumer.accept(new LootChoice() {
+            output.accept(new LootPoolEntry() {
                 @Override
                 public int getWeight(float luck) {
                     return weight;
                 }
                 @Override
-                public void generateLoot(Consumer<ItemStack> lootConsumer, LootContext context) {
-                    choice.choice.generateLoot(lootConsumer, context);
+                public void createItemStack(Consumer<ItemStack> lootConsumer, LootContext context) {
+                    choice.choice.createItemStack(lootConsumer, context);
                 }
             });
         }
         return true;
     }
 
-    private record WeightedChoice(LootChoice choice, float plainWeight, float weight) { }
+    private record WeightedChoice(LootPoolEntry choice, float plainWeight, float weight) { }
 
-    private static boolean isAffiliated(LootPoolEntry entry, Set<TagKey<Item>> affiliation) {
-        if (entry instanceof ItemEntry) {
+    private static boolean isAffiliated(LootPoolEntryContainer entry, Set<TagKey<Item>> affiliation) {
+        if (entry instanceof LootItem) {
             var item = ((ItemEntryAccessor) entry).spellEngine_getItem();
             for (var tag: affiliation) {
-                if (item.isIn(tag)) {
+                if (item.is(tag)) {
                     return true;
                 }
             }
@@ -156,8 +158,8 @@ public class AffiliationGroupEntry extends LootPoolEntry {
         return new Builder(extraWeight, operation, includeTeam);
     }
 
-    public static class Builder extends LootPoolEntry.Builder<Builder> {
-        private final List<LootPoolEntry> children = new ArrayList<>();
+    public static class Builder extends LootPoolEntryContainer.Builder<Builder> {
+        private final List<LootPoolEntryContainer> children = new ArrayList<>();
         private final float extraWeight;
         private final LootConfig.Behavior.WeightOperation operation;
         private final boolean includeTeam;
@@ -168,7 +170,7 @@ public class AffiliationGroupEntry extends LootPoolEntry {
             this.includeTeam = includeTeam;
         }
 
-        public Builder with(LootPoolEntry.Builder<?> child) {
+        public Builder with(LootPoolEntryContainer.Builder<?> child) {
             this.children.add(child.build());
             return this;
         }
@@ -178,13 +180,14 @@ public class AffiliationGroupEntry extends LootPoolEntry {
         }
 
         @Override
-        protected Builder getThisBuilder() {
+        protected Builder getThis() {
             return this;
         }
 
         @Override
-        public LootPoolEntry build() {
-            return new AffiliationGroupEntry(List.copyOf(children), extraWeight, operation, includeTeam, this.getConditions());
+        public LootPoolEntryContainer build() {
+            return new AffiliationGroupEntry(List.copyOf(children), extraWeight, operation, includeTeam,
+                    this.getCondition(), this.getModifier());
         }
     }
 }

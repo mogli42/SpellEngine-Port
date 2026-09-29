@@ -1,70 +1,80 @@
 package net.spell_engine.client.render;
 
-import net.minecraft.client.render.VertexConsumerProvider;
-import net.minecraft.client.render.entity.EntityRenderer;
-import net.minecraft.client.render.entity.EntityRendererFactory;
-import net.minecraft.client.render.item.ItemRenderer;
-import net.minecraft.client.util.math.MatrixStack;
-import net.minecraft.util.Identifier;
-import net.minecraft.util.math.RotationAxis;
-import net.spell_engine.api.render.CustomModels;
+import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.math.Axis;
+import net.minecraft.client.renderer.SubmitNodeCollector;
+import net.minecraft.client.renderer.entity.EntityRenderer;
+import net.minecraft.client.renderer.entity.EntityRendererProvider;
+import net.minecraft.client.renderer.entity.state.EntityRenderState;
+import net.minecraft.client.renderer.state.level.CameraRenderState;
 import net.spell_engine.api.spell.Spell;
 import net.spell_engine.entity.SpellCloud;
+import org.jetbrains.annotations.Nullable;
 
-public class SpellCloudRenderer<T extends SpellCloud> extends EntityRenderer<T> {
-    // Item renderer
-    private final ItemRenderer itemRenderer;
-    public SpellCloudRenderer(EntityRendererFactory.Context context) {
+public class SpellCloudRenderer<T extends SpellCloud> extends EntityRenderer<T, SpellCloudRenderer.State> {
+    public static class State extends EntityRenderState {
+        @Nullable public SpellCloud cloud;
+        public float tickDelta;
+    }
+
+    public SpellCloudRenderer(EntityRendererProvider.Context context) {
         super(context);
-        this.itemRenderer = context.getItemRenderer();
     }
 
     @Override
-    public Identifier getTexture(T entity) {
-        return null;
+    public State createRenderState() {
+        return new State();
     }
-    
-    public void render(T entity, float yaw, float tickDelta, MatrixStack matrixStack, VertexConsumerProvider vertexConsumers, int light) {
-        super.render(entity, yaw, tickDelta, matrixStack, vertexConsumers, light);
 
+    @Override
+    public void extractRenderState(T entity, State state, float tickDelta) {
+        super.extractRenderState(entity, state, tickDelta);
+        state.cloud = entity;
+        state.tickDelta = tickDelta;
+    }
+
+    @Override
+    public void submit(State state, PoseStack matrixStack, SubmitNodeCollector queue, CameraRenderState cameraState) {
+        super.submit(state, matrixStack, queue, cameraState);
+        var entity = state.cloud;
+        if (entity == null) {
+            return;
+        }
         var data = entity.getCloudData();
         if (data == null) {
             return;
         }
         var clientData = data.client_data;
         if (!clientData.model_fx.isEmpty()) {
-            renderModelFx(entity, clientData, tickDelta, matrixStack, vertexConsumers, light);
+            renderModelFx(entity, clientData, state.tickDelta, matrixStack, queue, state.lightCoords);
         }
     }
 
     /// Each model animated through the modelFX system, under the shared cloud-root transform. Animation time is the cloud's age (lines up with its lifecycle phases).
-    private void renderModelFx(T entity, Spell.Delivery.Cloud.ClientData clientData, float tickDelta,
-                               MatrixStack matrixStack, VertexConsumerProvider vertexConsumers, int light) {
-        matrixStack.push();
-        matrixStack.multiply(RotationAxis.POSITIVE_Y.rotationDegrees(-1F * entity.getYaw() + 180F));
-        // Grow the model with the cloud's radius. Applied about the ground origin (before the 0.5 lift)
-        // so the model scales up from where it sits. `getRenderScale` interpolates within the tick, so a
-        // discrete growth step doesn't pop; it's 1.0 for a non-growing cloud, leaving existing clouds
-        // untouched.
+    private void renderModelFx(SpellCloud entity, Spell.Delivery.Cloud.ClientData clientData, float tickDelta,
+                               PoseStack matrixStack, SubmitNodeCollector queue, int light) {
+        matrixStack.pushPose();
+        matrixStack.mulPose(Axis.YP.rotationDegrees(-1F * entity.getYRot() + 180F));
+        // Grow the model with the cloud's radius, applied about the ground origin (before the 0.5 lift)
         float renderScale = entity.getRenderScale(tickDelta);
         if (renderScale != 1F) {
             matrixStack.scale(renderScale, renderScale, renderScale);
         }
         matrixStack.translate(0, 0.5, 0); // Compensate for translate within CustomModels.render
 
-        float age = entity.age + tickDelta;
+        float age = entity.tickCount + tickDelta;
         for (var effect : clientData.model_fx) {
             if (effect == null || effect.model_id == null || effect.model_id.isEmpty()) {
                 continue;
             }
-            matrixStack.push();
+            matrixStack.pushPose();
             if (effect.positioning != null && effect.positioning.vertical != 0) {
-                matrixStack.translate(0, effect.positioning.vertical * entity.getHeight(), 0);
+                matrixStack.translate(0, effect.positioning.vertical * entity.getBbHeight(), 0);
             }
-            ModelEffectOperations.renderEffect(effect, age, matrixStack, itemRenderer, vertexConsumers, light, entity.getId());
-            matrixStack.pop();
+            ModelEffectOperations.renderEffect(effect, age, matrixStack, queue, light, entity.getId());
+            matrixStack.popPose();
         }
 
-        matrixStack.pop();
+        matrixStack.popPose();
     }
 }

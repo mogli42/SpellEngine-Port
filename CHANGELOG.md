@@ -39,9 +39,29 @@ Functional changes:
 
 # 1.10.5
 
+Ported to Minecraft 26.1.2 and 26.2 (Fabric + NeoForge, Java 25).
+
+Setup changes:
+- Trinkets support now targets Trinkets Updated (mod id `trinkets_updated`, replaces `trinkets`); no Cardinal Components dependency
+- Maven artifacts: the platform main jar is the shaded jar (no `dev-shadow` classifier any more), `-common` resolves via module metadata
+
+API changes:
+- Datagen helpers (`api/datagen/*`, `RPGSeriesDataGen`) take `FabricPackOutput` (was `FabricDataOutput`); tag generators extend `FabricTagsProvider`
+- HUD/GUI helpers (`HudRenderHelper`, `Drawable`, `CustomButton`) take `GuiGraphicsExtractor` (was `GuiGraphics`)
+- `Shield.VANILLA_SHIELD_BLOCKING` is a delayed component initializer; use `Shield.vanillaShieldBlocking(registries)` for the value
+- Item components (attributes, blocks_attacks, ...) are bound at resource reload, `item.components()` is empty until the first reload
+- `SpellBindRandomlyLootFunction.TYPE` removed, use `CODEC`
+- `api/entity/TwoWayCollisionChecker` removed (with its `EntityCollision` mixin): 26.1.2's `Entity#canBeCollidedWith(@Nullable Entity other)` receives the other entity, so override that instead of installing a reverse collision checker
+- `SpellHostTrinketItem` implements `TrinketCallback` (no `TrinketItem` base class any more)
+- Vanilla package moves: `BakedQuad`, `BlockStateModel`, `CameraRenderState` (re-import in consumers)
+
+Fixes:
+- Spell registry parsing is safe under parallel registry loading (NeoForge 26.1)
+- `sounds.json` datagen path on 26.1.2
+
 Functional changes:
 - Fixed NeoForge loot table injection #209
-- Fixed entity ting feature breaking armor trim rendering #210
+- Fixed entity tint feature breaking armor trim rendering #210
 - Fixed entity placements (Bear Trap and Battle Banner should no longer levitate above carpets)
 
 # 1.10.4

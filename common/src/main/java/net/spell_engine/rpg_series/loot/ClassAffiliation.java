@@ -1,11 +1,11 @@
 package net.spell_engine.rpg_series.loot;
 
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.item.Item;
-import net.minecraft.loot.context.LootContext;
-import net.minecraft.loot.context.LootContextParameters;
-import net.minecraft.registry.tag.TagKey;
-import net.minecraft.util.Identifier;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.level.storage.loot.LootContext;
+import net.minecraft.world.level.storage.loot.parameters.LootContextParams;
+import net.minecraft.tags.TagKey;
+import net.minecraft.resources.Identifier;
 import net.spell_engine.internals.container.SpellContainerSource;
 import net.spell_engine.rpg_series.tags.RPGSeriesItemTags;
 import org.jetbrains.annotations.Nullable;
@@ -28,7 +28,7 @@ public class ClassAffiliation {
     /// Called on the server, for the looting player (and for each online team member, when enabled).
     @FunctionalInterface
     public interface Resolver {
-        Collection<TagKey<Item>> resolve(PlayerEntity player);
+        Collection<TagKey<Item>> resolve(Player player);
     }
 
     /// Default logic: equipped spell book of the pool `<namespace>:spell_book/<name>`
@@ -55,29 +55,29 @@ public class ClassAffiliation {
         return result;
     }
 
-    @Nullable private static PlayerEntity looter(LootContext context) {
-        if (context.get(LootContextParameters.THIS_ENTITY) instanceof PlayerEntity player) {
+    @Nullable private static Player looter(LootContext context) {
+        if (context.getOptional(LootContextParams.THIS_ENTITY) instanceof Player player) {
             return player; // Chests, vaults, archaeology...
         }
-        var killer = context.get(LootContextParameters.LAST_DAMAGE_PLAYER);
+        var killer = context.getOptional(LootContextParams.LAST_DAMAGE_PLAYER);
         if (killer != null) {
             return killer;
         }
-        if (context.get(LootContextParameters.ATTACKING_ENTITY) instanceof PlayerEntity player) {
+        if (context.getOptional(LootContextParams.ATTACKING_ENTITY) instanceof Player player) {
             return player;
         }
         return null;
     }
 
-    public static Set<TagKey<Item>> of(PlayerEntity player, boolean includeTeam) {
+    public static Set<TagKey<Item>> of(Player player, boolean includeTeam) {
         var tags = new LinkedHashSet<TagKey<Item>>();
         collect(player, tags);
-        var team = includeTeam ? player.getScoreboardTeam() : null;
-        var server = player.getServer();
+        var team = includeTeam ? player.getTeam() : null;
+        var server = player.level().getServer();
         if (team != null && server != null) {
             // Online members only, the equipment of offline players is not available
-            for (var name: team.getPlayerList()) {
-                var member = server.getPlayerManager().getPlayer(name);
+            for (var name: team.getPlayers()) {
+                var member = server.getPlayerList().getPlayerByName(name);
                 if (member != null && member != player) {
                     collect(member, tags);
                 }
@@ -86,14 +86,14 @@ public class ClassAffiliation {
         return tags;
     }
 
-    private static void collect(PlayerEntity player, Set<TagKey<Item>> tags) {
+    private static void collect(Player player, Set<TagKey<Item>> tags) {
         var resolved = resolver.resolve(player);
         if (resolved != null) {
             tags.addAll(resolved);
         }
     }
 
-    private static Collection<TagKey<Item>> fromSpellBooks(PlayerEntity player) {
+    private static Collection<TagKey<Item>> fromSpellBooks(Player player) {
         var tags = new ArrayList<TagKey<Item>>();
         for (var source: SpellContainerSource.getSpellsOf(player).sources()) {
             var pool = source.container().pool();

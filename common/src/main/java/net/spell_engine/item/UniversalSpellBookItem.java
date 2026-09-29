@@ -1,13 +1,12 @@
 package net.spell_engine.item;
 
-import net.minecraft.component.DataComponentTypes;
-import net.minecraft.item.Item;
-import net.minecraft.item.ItemStack;
-import net.minecraft.registry.tag.TagKey;
-import net.minecraft.text.Text;
-import net.minecraft.util.Identifier;
-import net.minecraft.util.Language;
-import net.minecraft.util.Rarity;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.locale.Language;
+import net.minecraft.network.chat.Component;
+import net.minecraft.resources.Identifier;
+import net.minecraft.tags.TagKey;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
 import net.spell_engine.SpellEngineMod;
 import net.spell_engine.api.spell.Spell;
 import net.spell_engine.api.spell.SpellDataComponents;
@@ -20,16 +19,12 @@ import net.spell_engine.api.tags.SpellTags;
  * Variants are created by applying different spell tags to the same item.
  */
 public class UniversalSpellBookItem extends Item {
-    public static final Identifier ID = Identifier.of(SpellEngineMod.ID, "spell_book");
+    public static final Identifier ID = Identifier.fromNamespaceAndPath(SpellEngineMod.ID, "spell_book");
 
-    public UniversalSpellBookItem(Settings settings) {
+    public UniversalSpellBookItem(Properties settings) {
         super(settings);
     }
 
-    @Override
-    public boolean isEnchantable(ItemStack stack) {
-        return false;
-    }
 
     /**
      * Apply spell book configuration to an ItemStack based on a tag.
@@ -38,13 +33,13 @@ public class UniversalSpellBookItem extends Item {
      * @return true if configuration was successful
      */
     public static boolean applyFromTag(ItemStack itemStack, TagKey<Spell> tag) {
-        var tagPath = tag.id().getPath();
+        var tagPath = tag.location().getPath();
         if (!tagPath.startsWith(SpellTags.SPELL_BOOK_PREFIX)) {
             return false;
         }
 
         // Pool ID is the same as the tag ID (e.g., wizards:spell_book/fire)
-        var poolId = tag.id();
+        var poolId = tag.location();
 
         // Create spell container with binding pool
         var config = SpellContainerTemplates.config.safeValue();
@@ -66,13 +61,13 @@ public class UniversalSpellBookItem extends Item {
         // itemStack.set(DataComponentTypes.RARITY, Rarity.UNCOMMON);
 
         // Set custom model ID
-        var modelId = modelIdForPool(tag.id());
-        itemStack.set(SpellDataComponents.ITEM_MODEL, modelId);
+        var modelId = modelIdForPool(tag.location());
+        itemStack.set(DataComponents.ITEM_MODEL, modelId); // item-model definition: assets/<ns>/items/<pool path>.json
 
         // Set custom name if translation exists
-        var key = translationKeyForPool(tag.id());
-        if (Language.getInstance().hasTranslation(key)) {
-            itemStack.set(DataComponentTypes.ITEM_NAME, Text.translatable(key));
+        var key = translationKeyForPool(tag.location());
+        if (Language.getInstance().has(key)) {
+            itemStack.set(DataComponents.ITEM_NAME, Component.translatable(key));
         }
     }
 
@@ -80,8 +75,11 @@ public class UniversalSpellBookItem extends Item {
      * Generate model ID for this spell book variant.
      * Tag: wizards:spell_book/fire -> Model: wizards:item/fire_spell_book
      */
+    /// 1.21.11: the `minecraft:item_model` component names an item-model definition, resolved at
+    /// `assets/<ns>/items/<path>.json`, so the pool id maps 1:1 (e.g. `paladins:spell_book/paladin`
+    /// → `assets/paladins/items/spell_book/paladin.json`).
     public static Identifier modelIdForPool(Identifier tagId) {
-        return Identifier.of(tagId.getNamespace(), "item/" + tagId.getPath());
+        return tagId;
     }
 
     /**
@@ -103,7 +101,7 @@ public class UniversalSpellBookItem extends Item {
         if (container == null || container.pool() == null || container.pool().isEmpty()) {
             return null;
         }
-        var poolId = Identifier.of(container.pool());
+        var poolId = Identifier.parse(container.pool());
         return translationKeyForPool(poolId) + ".spell_binding.description";
     }
 }
