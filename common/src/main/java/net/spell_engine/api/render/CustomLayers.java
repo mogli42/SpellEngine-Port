@@ -222,14 +222,14 @@ public class CustomLayers {
         return SPELL_OBJECT_CULL.apply(TextureAtlas.LOCATION_BLOCKS);
     }
 
-    /// The [LightEmission#NONE] layer: vanilla `entityTranslucentCullItemTarget` semantics (26.1 folded the former
-    /// `item_entity_translucent_cull` shader into `ENTITY_TRANSLUCENT_CULL` + the item-entity output target), but
+    /// The [LightEmission#NONE] layer: vanilla `entityTranslucentCull` semantics (26.3 replaced the item-entity
+    /// output target of the former `entityTranslucentCullItemTarget` with the `OIT_ENTITY_CULL` pipeline set), but
     /// never part of the entity outline (a spell model riding on a glowing entity is a decorative overlay, not
     /// its body) and not crumbling-affected.
     private static final Function<Identifier, RenderType> SPELL_OBJECT_CULL = Util.memoize(texture ->
             RenderType.create("spell_object_cull", RenderSetup.builder(RenderPipelines.ENTITY_TRANSLUCENT_CULL)
                     .withTexture("Sampler0", texture)
-                    .setOutputTarget(net.minecraft.client.renderer.rendertype.OutputTarget.ITEM_ENTITY_TARGET)
+                    .setOitPipelines(RenderPipelines.OIT_ENTITY_CULL)
                     .useLightmap()
                     .useOverlay()
                     .sortOnUpload()
@@ -421,9 +421,10 @@ public class CustomLayers {
     /// `EQUAL` depth test is the mask: it confines the streaks to the pixels the item wrote, so the pass
     /// must be drawn after the item (see `ItemGlowRendering`: since 26.2 the feature-render phases order it,
     /// blending custom geometry runs after the solid item pass). Do not relax it to `GEQUAL`. Direction-neutral
-    /// under reverse-Z. Layout mirrors vanilla 26.2 `RenderPipelines.GLINT`.
+    /// under reverse-Z. Layout mirrors vanilla 26.3 `RenderPipelines.GLINT`.
     private static final RenderPipeline ITEM_GLOW_GLINT_PIPELINE = RenderPipeline.builder(RenderPipelines.GLOBALS_SNIPPET)
-            .withBindGroupLayout(BindGroupLayouts.MATRICES_PROJECTION)
+            .withBindGroupLayout(BindGroupLayouts.PROJECTION)
+            .withBindGroupLayout(BindGroupLayouts.DYNAMIC_TRANSFORMS)
             .withBindGroupLayout(BindGroupLayouts.FOG)
             .withLocation(pipelineId("item_glow_glint"))
             .withVertexShader("core/glint")
@@ -436,7 +437,7 @@ public class CustomLayers {
             .withPrimitiveTopology(PrimitiveTopology.QUADS)
             .build();
 
-    private static Supplier<com.mojang.blaze3d.textures.GpuSampler> itemGlowSampler(boolean smooth) {
+    private static Supplier<com.mojang.renderpearl.api.textures.GpuSampler> itemGlowSampler(boolean smooth) {
         // Bilinear (the 1.21.1 `blur = true` texture flag) or nearest, per the `weaponGlowSmooth` client config.
         // REPEAT is essential: the scroll offset cycles through [0, 1) and wraps, which is only seamless when the
         // texture tiles. `SamplerCache.get(FilterMode)` is the clamped overlay/lightmap sampler — with it the item

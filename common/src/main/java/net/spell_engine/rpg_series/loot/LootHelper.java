@@ -19,10 +19,12 @@ import net.minecraft.world.level.storage.loot.functions.EnchantWithLevelsFunctio
 import net.minecraft.world.level.storage.loot.functions.LootItemFunction;
 import net.minecraft.world.level.storage.loot.functions.SequenceFunction;
 import net.minecraft.world.level.storage.loot.predicates.LootItemKilledByPlayerCondition;
-import net.minecraft.world.level.storage.loot.providers.number.ints.BinomialDistributionGenerator;
-import net.minecraft.world.level.storage.loot.providers.number.ConstantValue;
-import net.minecraft.world.level.storage.loot.providers.number.NumberProvider;
-import net.minecraft.world.level.storage.loot.providers.number.UniformGenerator;
+import net.minecraft.core.Holder;
+import net.minecraft.world.level.storage.loot.providers.number.floats.ContextFloatProviders;
+import net.minecraft.world.level.storage.loot.providers.number.ints.ConstantValue;
+import net.minecraft.world.level.storage.loot.providers.number.ints.ContextIntProvider;
+import net.minecraft.world.level.storage.loot.providers.number.ints.ContextIntProviders;
+import net.minecraft.world.level.storage.loot.providers.number.ints.UniformGenerator;
 import net.spell_engine.mixin.loot.CombinedEntryAccessor;
 import net.spell_engine.mixin.loot.EnchantWithLevelsLootFunctionAccessor;
 import net.spell_engine.mixin.loot.ItemEntryAccessor;
@@ -353,12 +355,12 @@ public class LootHelper {
                     enchanted = true;
                     var levels = ((EnchantWithLevelsLootFunctionAccessor) function).spellEngine_getLevels();
                     Float min = null, max = null;
-                    if (levels instanceof ConstantValue constant) {
-                        min = constant.value(); max = constant.value();
-                    } else if (levels instanceof UniformGenerator uniform
-                            && uniform.min() instanceof ConstantValue lo
-                            && uniform.max() instanceof ConstantValue hi) {
-                        min = lo.value(); max = hi.value();
+                    if (levels.value() instanceof ConstantValue constant) {
+                        min = (float) constant.value(); max = (float) constant.value();
+                    } else if (levels.value() instanceof UniformGenerator uniform
+                            && uniform.min().value() instanceof ConstantValue lo
+                            && uniform.max().value() instanceof ConstantValue hi) {
+                        min = (float) lo.value(); max = (float) hi.value();
                     }
                     if (min != null) {
                         occurrence.minLevel = occurrence.minLevel == null ? min : Math.min(occurrence.minLevel, min);
@@ -482,13 +484,13 @@ public class LootHelper {
                     if (mix.enchantedWeight() > 0) {
                         var levels = mix.levels(enchant);
                         entrySink.accept(LootItem.lootTableItem(item).setWeight(weight * mix.enchantedWeight())
-                                .apply(EnchantWithLevelsFunction.enchantWithLevels(registries, numberProvider(levels.min_power, levels.max_power))));
+                                .apply(EnchantWithLevelsFunction.enchantWithLevels(registries.lookupOrThrow(Registries.ENCHANTMENT), numberProvider(levels.min_power, levels.max_power))));
                     }
                     continue;
                 }
 
                 if (enchant != null && enchant.isValid()) {
-                    var enchantFunction = EnchantWithLevelsFunction.enchantWithLevels(registries, numberProvider(enchant.min_power, enchant.max_power));
+                    var enchantFunction = EnchantWithLevelsFunction.enchantWithLevels(registries.lookupOrThrow(Registries.ENCHANTMENT), numberProvider(enchant.min_power, enchant.max_power));
                     lootEntry.apply(enchantFunction);
                 }
                 if (spellBind != null && spellBind.isValid()) {
@@ -512,8 +514,8 @@ public class LootHelper {
         rolls = rolls > 0 ? rolls : 1F;
         var attempts = Math.ceil(rolls);
         var chance = rolls / attempts;
-        lootPoolBuilder.setRolls(BinomialDistributionGenerator.binomial((int) attempts, (float) chance));
-        lootPoolBuilder.setBonusRolls(ConstantValue.exactly(bonusRolls));
+        lootPoolBuilder.setRolls(ContextIntProviders.binomial((int) attempts, (float) chance));
+        lootPoolBuilder.setBonusRolls(ContextFloatProviders.exactly(bonusRolls));
     }
 
     // MARK: Pattern matching (tag-cache backed, since tags are not loaded yet)
@@ -557,11 +559,13 @@ public class LootHelper {
         return (tier == null || tier < 0) ? -1 : tier;
     }
 
-    private static NumberProvider numberProvider(float min, float max) {
+    /// 26.3: every consumer (enchant levels, spell tier, spell count) takes an int provider.
+    /// Config bounds are rounded, matching how the former float providers were read as ints (`Math.round`).
+    private static Holder<ContextIntProvider> numberProvider(float min, float max) {
         if (max <= min) {
-            return ConstantValue.exactly(min);
+            return ContextIntProviders.exactly(Math.round(min));
         } else {
-            return UniformGenerator.between(min, max);
+            return ContextIntProviders.between(Math.round(min), Math.round(max));
         }
     }
 }

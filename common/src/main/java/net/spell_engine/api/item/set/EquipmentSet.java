@@ -56,7 +56,7 @@ public class EquipmentSet {
     ) {
         public static final Codec<Definition> CODEC = RecordCodecBuilder.create(instance -> instance.group(
                 Codec.STRING.fieldOf("name").forGetter(Definition::name),
-                RegistryCodecs.homogeneousList(Registries.ITEM).fieldOf("items").forGetter(Definition::items),
+                RegistryCodecs.holderSet(Registries.ITEM).fieldOf("items").forGetter(Definition::items),
                 Bonus.CODEC.listOf().fieldOf("bonuses").forGetter(Definition::bonuses)
         ).apply(instance, Definition::new));
     }

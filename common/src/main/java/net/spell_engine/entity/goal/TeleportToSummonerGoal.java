@@ -38,7 +38,7 @@ public class TeleportToSummonerGoal extends Goal {
     public void start() {
         LivingEntity owner = entity.getOwner();
         if (owner == null) return;
-        entity.randomTeleport(owner.getX(), owner.getY(), owner.getZ(), false);
+        entity.randomTeleport(owner.getX(), owner.getY(), owner.getZ(), false, blockState -> false); // No landing restriction
         entity.setTarget(null);
         entity.getNavigation().stop();
     }

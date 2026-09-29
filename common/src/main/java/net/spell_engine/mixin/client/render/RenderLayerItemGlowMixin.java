@@ -3,7 +3,7 @@ package net.spell_engine.mixin.client.render;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
-import net.minecraft.client.renderer.DynamicUniforms;
+import net.minecraft.client.renderer.DynamicGpuData;
 import net.minecraft.client.renderer.rendertype.RenderType;
 import net.spell_engine.api.render.CustomLayers;
 import org.joml.Matrix4f;
@@ -19,8 +19,8 @@ import org.spongepowered.asm.mixin.injection.At;
 /// the 4-arg overload with the glow color for the glow layers only.
 @Mixin(RenderType.class)
 public class RenderLayerItemGlowMixin {
-    @WrapOperation(method = "writeDynamicTransforms", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/DynamicUniforms;writeTransform(Lorg/joml/Matrix4f;Lorg/joml/Matrix4f;)Lcom/mojang/blaze3d/buffers/GpuBufferSlice;"))
-    private GpuBufferSlice writeDynamicTransforms_WrapColorModulator_SpellEngine_itemGlow(DynamicUniforms uniforms, Matrix4f modelView, Matrix4f textureMatrix, Operation<GpuBufferSlice> original) {
+    @WrapOperation(method = "writeDynamicTransforms", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/DynamicGpuData;writeTransform(Lorg/joml/Matrix4f;Lorg/joml/Matrix4f;)Lcom/mojang/renderpearl/api/buffers/GpuBufferSlice;"))
+    private GpuBufferSlice writeDynamicTransforms_WrapColorModulator_SpellEngine_itemGlow(DynamicGpuData uniforms, Matrix4f modelView, Matrix4f textureMatrix, Operation<GpuBufferSlice> original) {
         var glow = CustomLayers.itemGlowColorModulator((RenderType) (Object) this);
         if (glow == null) {
             return original.call(uniforms, modelView, textureMatrix);
