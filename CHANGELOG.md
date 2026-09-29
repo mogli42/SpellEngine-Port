@@ -1,5 +1,10 @@
 # 1.10.8
 
+Minecraft 26.3:
+- Ported to Minecraft 26.3 (Java 25; Fabric Loader 0.19.5, Fabric API 0.161.0, NeoForge 26.3.0.34-beta)
+- EMI integration is not included on 26.x (EMI has no 26.x release yet), see `enable_emi` in `gradle.properties`
+- Loot configs: enchantment levels and spell tier/count ranges are whole numbers now (26.3 loot functions take integer providers), fractional bounds are rounded
+
 Functional changes:
 - Fixed kills landed by summoned entities not counting as player kills (no boss loot, no experience, no kill advancement for the summoner)
 - Loot defaults: every boss injector now offers both a tier-5 weapon and a tier-5 armor (previously each had only one of the two)

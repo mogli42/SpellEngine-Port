@@ -9,7 +9,7 @@ import net.fabricmc.fabric.api.creativetab.v1.CreativeModeTabEvents;
 import net.fabricmc.fabric.api.loot.v3.LootTableEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.util.TriState;
-import net.minecraft.core.HolderLookup;
+import net.minecraft.core.HolderGetter;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.item.CreativeModeTab;
@@ -74,7 +74,7 @@ public class PlatformEventsImpl {
                 });
     }
 
-    private record FabricLootContext(HolderLookup.Provider registries, Identifier tableId,
+    private record FabricLootContext(HolderGetter.Provider registries, Identifier tableId,
                                      net.minecraft.world.level.storage.loot.LootTable.Builder builder)
             implements PlatformEvents.LootTableModifyContext {
         @Override

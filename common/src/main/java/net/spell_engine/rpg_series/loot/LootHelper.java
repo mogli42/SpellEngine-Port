@@ -1,6 +1,6 @@
 package net.spell_engine.rpg_series.loot;
 
-import net.minecraft.core.HolderLookup;
+import net.minecraft.core.HolderGetter;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.Identifier;
@@ -146,7 +146,7 @@ public class LootHelper {
 
     // MARK: Injection
 
-    public static void configure(HolderLookup.Provider registries, Identifier lootTableId,
+    public static void configure(HolderGetter.Provider registries, Identifier lootTableId,
                                  List<LootPool> existingPools, Consumer<LootPool> poolSink,
                                  LootConfig config, String configName) {
         boolean isEntityLootTable = lootTableId.getPath().startsWith("entities");
@@ -176,7 +176,7 @@ public class LootHelper {
         configureFallback(registries, tableId, existingPools, poolSink, config, configName, isEntityLootTable);
     }
 
-    private static void configureFallback(HolderLookup.Provider registries, String tableId,
+    private static void configureFallback(HolderGetter.Provider registries, String tableId,
                                           List<LootPool> existingPools, Consumer<LootPool> poolSink,
                                           LootConfig config, String configName, boolean isEntityLootTable) {
         var fallback = config.fallback;
@@ -415,7 +415,7 @@ public class LootHelper {
     // MARK: Pool building
 
     /// Null when none of the entries resolve to an item (for example: tag of a mod not installed).
-    @Nullable private static LootPool.Builder buildPool(HolderLookup.Provider registries, List<LootConfig.Pool.Entry> entries,
+    @Nullable private static LootPool.Builder buildPool(HolderGetter.Provider registries, List<LootConfig.Pool.Entry> entries,
                                       float rolls, float bonusRolls, boolean killedByPlayerOnly, @Nullable EnchantMix mix,
                                       @Nullable LootConfig.Behavior behavior) {
         LootPool.Builder lootPoolBuilder = LootPool.lootPool();

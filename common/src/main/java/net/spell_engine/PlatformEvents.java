@@ -6,7 +6,7 @@ import net.minecraft.commands.CommandBuildContext;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.core.Holder;
-import net.minecraft.core.HolderLookup;
+import net.minecraft.core.HolderGetter;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
@@ -114,7 +114,7 @@ public class PlatformEvents {
     /// Handed to a loot-table-modify callback: exposes the table being loaded and lets the
     /// callback append pools without any loader-specific builder type.
     public interface LootTableModifyContext {
-        HolderLookup.Provider registries();
+        HolderGetter.Provider registries();
         Identifier tableId();
         /// Snapshot of the pools the table already has (as parsed from the datapack, plus anything
         /// other mods added before us). Read-only; used to inspect what the table drops.
