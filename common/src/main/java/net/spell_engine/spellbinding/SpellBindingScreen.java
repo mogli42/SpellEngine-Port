@@ -2,21 +2,23 @@ package net.spell_engine.spellbinding;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.DialogScreen;
-import net.minecraft.client.gui.screen.ingame.CyclingSlotIcon;
-import net.minecraft.client.gui.screen.ingame.HandledScreen;
-import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.client.render.DiffuseLighting;
-import net.minecraft.entity.player.PlayerInventory;
-import net.minecraft.item.ItemStack;
-import net.minecraft.text.MutableText;
-import net.minecraft.text.Style;
-import net.minecraft.text.Text;
-import net.minecraft.util.Formatting;
-import net.minecraft.util.Identifier;
-import net.minecraft.util.Language;
+import net.minecraft.ChatFormatting;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.screens.ConfirmScreen;
+import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
+import net.minecraft.client.gui.screens.inventory.CyclingSlotBackground;
+import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.client.renderer.RenderPipelines;
+import net.minecraft.locale.Language;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.FontDescription;
+import net.minecraft.network.chat.MutableComponent;
+import net.minecraft.network.chat.Style;
+import net.minecraft.resources.Identifier;
+import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.item.ItemStack;
 import net.spell_engine.SpellEngineMod;
 import net.spell_engine.api.spell.registry.SpellRegistry;
 import net.spell_engine.client.gui.CustomButton;
@@ -31,38 +33,40 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-public class SpellBindingScreen extends HandledScreen<SpellBindingScreenHandler> {
-    private static final Identifier Pl = Identifier.of(SpellEngineMod.ID, "textures/gui/" + SpellBinding.name + ".png");
-    private static final Identifier PLACEHOLDER_SPELL_BOOK = Identifier.of(SpellEngineMod.ID, "item/placeholder/spell_book");
-    private static final Identifier PLACEHOLDER_LAPIS = Identifier.of(SpellEngineMod.ID, "item/placeholder/lapis");
-    private static final Identifier PLACEHOLDER_SCROLL = Identifier.of(SpellEngineMod.ID, "item/placeholder/scroll");
-    private final CyclingSlotIcon mainSlotIcon = new CyclingSlotIcon(0);
-    private final CyclingSlotIcon consumableSlotIcon = new CyclingSlotIcon(1);
+public class SpellBindingScreen extends AbstractContainerScreen<SpellBindingScreenHandler> {
+    private static final Identifier Pl = Identifier.fromNamespaceAndPath(SpellEngineMod.ID, "textures/gui/" + SpellBinding.name + ".png");
+    private static final Identifier PLACEHOLDER_SPELL_BOOK = Identifier.fromNamespaceAndPath(SpellEngineMod.ID, "item/placeholder/spell_book");
+    private static final Identifier PLACEHOLDER_LAPIS = Identifier.fromNamespaceAndPath(SpellEngineMod.ID, "item/placeholder/lapis");
+    private static final Identifier PLACEHOLDER_SCROLL = Identifier.fromNamespaceAndPath(SpellEngineMod.ID, "item/placeholder/scroll");
+    private final CyclingSlotBackground mainSlotIcon = new CyclingSlotBackground(0);
+    private final CyclingSlotBackground consumableSlotIcon = new CyclingSlotBackground(1);
 
+    private static final int BACKGROUND_WIDTH = 176;
     private static final int BACKGROUND_STANDARD_HEIGHT = 166;
     private static final int BACKGROUND_EXTRA_HEIGHT = 18;
     private static final int BACKGROUND_HEIGHT = BACKGROUND_STANDARD_HEIGHT + BACKGROUND_EXTRA_HEIGHT;
 
     private ItemStack stack;
 
-    public SpellBindingScreen(SpellBindingScreenHandler handler, PlayerInventory inventory, Text title) {
-        super(handler, inventory, title);
+    public SpellBindingScreen(SpellBindingScreenHandler handler, Inventory inventory, Component title) {
+        super(handler, inventory, title, BACKGROUND_WIDTH, BACKGROUND_HEIGHT); // 26.1: imageWidth/imageHeight are final ctor params
         this.stack = ItemStack.EMPTY;
     }
 
     private int pageOffset = 0;
-    private ButtonWidget upButton;
-    private ButtonWidget downButton;
+    private Button upButton;
+    private Button downButton;
 
     protected void init() {
-        super.init();
-        this.backgroundHeight = BACKGROUND_HEIGHT;
-        this.x = (this.width - this.backgroundWidth) / 2;
-        this.y = (this.height - this.backgroundHeight) / 2;
-        this.titleY = 6 - (BACKGROUND_EXTRA_HEIGHT - 2);
+        super.init(); // leftPos/topPos are derived from the ctor-supplied imageWidth/imageHeight
+        this.titleLabelY = 6 - (BACKGROUND_EXTRA_HEIGHT - 2);
+        // The panel is BACKGROUND_EXTRA_HEIGHT taller than a standard container, but the extra height is drawn
+        // *above* the standard body (see extractBackground), so the player inventory keeps its standard position.
+        // AbstractContainerScreen's ctor derives inventoryLabelY from the (enlarged) imageHeight, so restate it.
+        this.inventoryLabelY = BACKGROUND_STANDARD_HEIGHT - 94;
 
-        int originX = (this.width - this.backgroundWidth) / 2;
-        int originY = (this.height - this.backgroundHeight) / 2;
+        int originX = (this.width - this.imageWidth) / 2;
+        int originY = (this.height - this.imageHeight) / 2;
         var x = originX + 156;
         var y = originY - 10;
         var width = 16;
@@ -76,28 +80,30 @@ public class SpellBindingScreen extends HandledScreen<SpellBindingScreenHandler>
                 CustomButton.Type.SMALL_DOWN,
                 button -> { this.pageDown(); });
         downButton.visible = false;
-        this.addDrawableChild(upButton);
-        this.addDrawableChild(downButton);
-        client.interactionManager.clickButton(this.handler.syncId, SpellBindingScreenHandler.INIT_SYNC_ID);
+        this.addRenderableWidget(upButton);
+        this.addRenderableWidget(downButton);
+        minecraft.gameMode.handleInventoryButtonClick(this.menu.containerId, SpellBindingScreenHandler.INIT_SYNC_ID);
     }
 
     @Override
-    public void handledScreenTick() {
-        super.handledScreenTick();
-        this.mainSlotIcon.updateTexture(List.of(PLACEHOLDER_SPELL_BOOK));
-        this.consumableSlotIcon.updateTexture(List.of(PLACEHOLDER_LAPIS, PLACEHOLDER_SCROLL));
+    public void containerTick() {
+        super.containerTick();
+        this.mainSlotIcon.tick(List.of(PLACEHOLDER_SPELL_BOOK));
+        this.consumableSlotIcon.tick(List.of(PLACEHOLDER_LAPIS, PLACEHOLDER_SCROLL));
     }
 
     @Override
-    public boolean mouseClicked(double mouseX, double mouseY, int button) {
+    public boolean mouseClicked(MouseButtonEvent click, boolean doubled) {
+        double mouseX = click.x(), mouseY = click.y();
+        int button = click.button();
         try {
-            var mode = handler.getMode();
+            var mode = menu.getMode();
 
             if (mode == SpellBinding.Mode.BOOK) {
                 // BOOK MODE: Check book clicks
                 for (var book : bookViewModels) {
                     if (book.mouseOver((int) mouseX, (int) mouseY)) {
-                        client.interactionManager.clickButton(this.handler.syncId, book.originalIndex());
+                        minecraft.gameMode.handleInventoryButtonClick(this.menu.containerId, book.originalIndex());
                         return true;
                     }
                 }
@@ -110,12 +116,12 @@ public class SpellBindingScreen extends HandledScreen<SpellBindingScreenHandler>
 
                     for (var icon : tierRow.spellIcons()) {
                         if (icon.mouseOver((int) mouseX, (int) mouseY)) {
-                            if (handler.allowUnbinding() && icon.binding().state == SpellBinding.State.ApplyState.ALREADY_APPLIED) {
+                            if (menu.allowUnbinding() && icon.binding().state == SpellBinding.State.ApplyState.ALREADY_APPLIED) {
                                 unbindDialog(icon);
                                 return true;
                             }
 
-                            client.interactionManager.clickButton(this.handler.syncId, icon.originalIndex());
+                            minecraft.gameMode.handleInventoryButtonClick(this.menu.containerId, icon.originalIndex());
                             return true;
                         }
                     }
@@ -125,24 +131,20 @@ public class SpellBindingScreen extends HandledScreen<SpellBindingScreenHandler>
             System.err.println(e.getMessage());
             e.printStackTrace();
         }
-        return super.mouseClicked(mouseX, mouseY, button);
+        return super.mouseClicked(click, doubled);
     }
 
     private void unbindDialog(SpellBindingWidgets.SpellIconViewModel icon) {
-        var title = Text.translatable("gui.spell_engine.spell_binding.unbind_dialog.title", icon.spell().name().getString());
-        client.setScreen(new UnbindDialog(title, ImmutableList.of(
-                new DialogScreen.ChoiceButton(Text.translatable("gui.spell_engine.spell_binding.unbind_dialog.confirm").formatted(Formatting.RED), button -> {
-            client.interactionManager.clickButton(this.handler.syncId, icon.originalIndex());
-            this.client.setScreen(this);
-        }), new DialogScreen.ChoiceButton(Text.translatable("gui.spell_engine.spell_binding.unbind_dialog.cancel"), button -> {
-            this.client.setScreen(this);
-        }))));
-    }
-
-    public static class UnbindDialog extends DialogScreen {
-        protected UnbindDialog(Text title, ImmutableList<ChoiceButton> choiceButtons) {
-            super(title, List.of(Text.translatable("gui.spell_engine.spell_binding.unbind_dialog.subtitle")), choiceButtons);
-        }
+        var title = Component.translatable("gui.spell_engine.spell_binding.unbind_dialog.title", icon.spell().name().getString());
+        // DialogScreen was removed in 1.21.6; ConfirmScreen offers the same two-choice flow
+        minecraft.gui.setScreen(new ConfirmScreen(confirmed -> {
+            if (confirmed) {
+                minecraft.gameMode.handleInventoryButtonClick(this.menu.containerId, icon.originalIndex());
+            }
+            this.minecraft.gui.setScreen(this);
+        }, title, Component.translatable("gui.spell_engine.spell_binding.unbind_dialog.subtitle"),
+                Component.translatable("gui.spell_engine.spell_binding.unbind_dialog.confirm").withStyle(ChatFormatting.RED),
+                Component.translatable("gui.spell_engine.spell_binding.unbind_dialog.cancel")));
     }
 
     public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
@@ -161,22 +163,21 @@ public class SpellBindingScreen extends HandledScreen<SpellBindingScreenHandler>
     }
 
     @Override
-    public void render(DrawContext context, int mouseX, int mouseY, float delta) {
-        // delta = this.client.getTickDelta();
-        this.renderBackground(context, mouseX, mouseY, delta);
-        super.render(context, mouseX, mouseY, delta);
-        this.drawMouseoverTooltip(context, mouseX, mouseY);
-        var player = MinecraftClient.getInstance().player;
-        var lapisCount = handler.getLapisCount();
-        var itemStack = handler.getStacks().get(0);
-        var mode = handler.getMode();
+    public void extractRenderState(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta) {
+        // 26.1: the background goes through extractBackground; AbstractContainerScreen#extractRenderState already
+        // extracts the hovered-slot item tooltip (the former explicit renderTooltip call)
+        super.extractRenderState(context, mouseX, mouseY, delta);
+        var player = Minecraft.getInstance().player;
+        var lapisCount = menu.getLapisCount();
+        var itemStack = menu.getItems().get(0);
+        var mode = menu.getMode();
 
         if (mode == SpellBinding.Mode.BOOK) {
             // BOOK MODE: Tooltip for books
             for (var book : bookViewModels) {
                 if (!book.mouseOver(mouseX, mouseY)) continue;
 
-                ArrayList<Text> tooltip = Lists.newArrayList();
+                ArrayList<Component> tooltip = Lists.newArrayList();
 
                 switch (book.binding().state) {
                     case APPLICABLE -> {
@@ -186,16 +187,16 @@ public class SpellBindingScreen extends HandledScreen<SpellBindingScreenHandler>
                         } else {
                             if (book.binding().requirements.requiredLevel() > 0) {
                                 var hasRequiredLevels = book.binding().requirements.metRequiredLevel(player);
-                                tooltip.add(Text.translatable("gui.spell_engine.spell_binding.level_req_fail",
+                                tooltip.add(Component.translatable("gui.spell_engine.spell_binding.level_req_fail",
                                                 book.binding().requirements.requiredLevel())
-                                        .formatted(hasRequiredLevels ? Formatting.GRAY : Formatting.RED));
+                                        .withStyle(hasRequiredLevels ? ChatFormatting.GRAY : ChatFormatting.RED));
                             }
                             var levelCost = book.binding().requirements.levelCost();
                             if (levelCost > 0) {
                                 var hasEnoughLevels = book.binding().requirements.hasEnoughLevelsToSpend(player);
-                                MutableText levels = levelCost == 1 ? Text.translatable("container.enchant.level.one")
-                                        : Text.translatable("container.enchant.level.many", levelCost);
-                                tooltip.add(levels.formatted(hasEnoughLevels ? Formatting.GRAY : Formatting.RED));
+                                MutableComponent levels = levelCost == 1 ? Component.translatable("container.enchant.level.one")
+                                        : Component.translatable("container.enchant.level.many", levelCost);
+                                tooltip.add(levels.withStyle(hasEnoughLevels ? ChatFormatting.GRAY : ChatFormatting.RED));
                             }
                         }
                     }
@@ -205,19 +206,19 @@ public class SpellBindingScreen extends HandledScreen<SpellBindingScreenHandler>
                 // Add book description if available
                 if (book.isMouseOverIcon(mouseX, mouseY)) {
                     var key = UniversalSpellBookItem.descriptionKeyFromStack(book.itemStack());
-                    if (key != null && Language.getInstance().hasTranslation(key)) {
+                    if (key != null && Language.getInstance().has(key)) {
                         if (!tooltip.isEmpty()) {
-                            tooltip.add(Text.literal(" "));
+                            tooltip.add(Component.literal(" "));
                         }
-                        var rawDescription = Language.getInstance().get(key);
+                        var rawDescription = Language.getInstance().getOrDefault(key);
                         for (var line : rawDescription.split(System.lineSeparator())) {
-                            tooltip.add(Text.literal(line).formatted(Formatting.GRAY));
+                            tooltip.add(Component.literal(line).withStyle(ChatFormatting.GRAY));
                         }
                     }
                 }
 
                 if (!tooltip.isEmpty()) {
-                    context.drawTooltip(textRenderer, tooltip, mouseX, mouseY);
+                    context.setComponentTooltipForNextFrame(font, tooltip, mouseX, mouseY);
                 }
                 return;  // Only one tooltip at a time
             }
@@ -230,45 +231,45 @@ public class SpellBindingScreen extends HandledScreen<SpellBindingScreenHandler>
                     if (!icon.mouseOver(mouseX, mouseY)) continue;
 
                     if (icon.spell() != null) {
-                        ArrayList<Text> tooltip = Lists.newArrayList();
+                        ArrayList<Component> tooltip = Lists.newArrayList();
                         boolean showSpellDetails = true;
                         switch (icon.binding().state) {
                             case ALREADY_APPLIED -> {
-                                tooltip.add(Text.translatable("gui.spell_engine.spell_binding.already_bound")
-                                        .formatted(Formatting.GRAY));
+                                tooltip.add(Component.translatable("gui.spell_engine.spell_binding.already_bound")
+                                        .withStyle(ChatFormatting.GRAY));
                             }
                             case NO_MORE_SLOT -> {
-                                tooltip.add(Text.translatable("gui.spell_engine.spell_binding.no_more_slots")
-                                        .formatted(Formatting.GRAY));
+                                tooltip.add(Component.translatable("gui.spell_engine.spell_binding.no_more_slots")
+                                        .withStyle(ChatFormatting.GRAY));
                                 showSpellDetails = false;
                             }
                             case TIER_CONFLICT -> {
-                                tooltip.add(Text.translatable("gui.spell_engine.spell_binding.tier_conflict")
-                                        .formatted(Formatting.GRAY));
+                                tooltip.add(Component.translatable("gui.spell_engine.spell_binding.tier_conflict")
+                                        .withStyle(ChatFormatting.GRAY));
                                 showSpellDetails = false;
                             }
                             case APPLICABLE -> {
                                 if (icon.binding().readyToApply(player, lapisCount)) {
-                                    tooltip.add(Text.translatable("gui.spell_engine.spell_binding.available")
-                                            .formatted(Formatting.GREEN));
+                                    tooltip.add(Component.translatable("gui.spell_engine.spell_binding.available")
+                                            .withStyle(ChatFormatting.GREEN));
                                 }
                                 var hasRequiredLevels = icon.binding().requirements.metRequiredLevel(player);
                                 if (icon.binding().requirements.requiredLevel() > 0) {
-                                    tooltip.add(Text.translatable("gui.spell_engine.spell_binding.level_req_fail",
+                                    tooltip.add(Component.translatable("gui.spell_engine.spell_binding.level_req_fail",
                                                     icon.binding().requirements.requiredLevel())
-                                            .formatted(hasRequiredLevels ? Formatting.GRAY : Formatting.RED));
+                                            .withStyle(hasRequiredLevels ? ChatFormatting.GRAY : ChatFormatting.RED));
                                 }
                                 var lapisCost = icon.binding().requirements.lapisCost();
                                 if (lapisCost > 0) {
                                     var hasEnoughLapis = icon.binding().requirements.hasEnoughLapis(lapisCount);
-                                    MutableText lapis = lapisCost == 1 ? Text.translatable("container.enchant.lapis.one") : Text.translatable("container.enchant.lapis.many", lapisCost);
-                                    tooltip.add(lapis.formatted(hasEnoughLapis ? Formatting.GRAY : Formatting.RED));
+                                    MutableComponent lapis = lapisCost == 1 ? Component.translatable("container.enchant.lapis.one") : Component.translatable("container.enchant.lapis.many", lapisCost);
+                                    tooltip.add(lapis.withStyle(hasEnoughLapis ? ChatFormatting.GRAY : ChatFormatting.RED));
                                 }
                                 var levelCost = icon.binding().requirements.levelCost();
                                 if (levelCost > 0) {
                                     var hasEnoughLevels = icon.binding().requirements.hasEnoughLevelsToSpend(player);
-                                    MutableText levels = levelCost == 1 ? Text.translatable("container.enchant.level.one") : Text.translatable("container.enchant.level.many", levelCost);
-                                    tooltip.add(levels.formatted(hasEnoughLevels ? Formatting.GRAY : Formatting.RED));
+                                    MutableComponent levels = levelCost == 1 ? Component.translatable("container.enchant.level.one") : Component.translatable("container.enchant.level.many", levelCost);
+                                    tooltip.add(levels.withStyle(hasEnoughLevels ? ChatFormatting.GRAY : ChatFormatting.RED));
                                 }
                                 showSpellDetails = icon.isDetailsPublic();
                             }
@@ -278,12 +279,12 @@ public class SpellBindingScreen extends HandledScreen<SpellBindingScreenHandler>
                         }
 
                         if (showSpellDetails) {
-                            tooltip.add(Text.literal(" "));
+                            tooltip.add(Component.literal(" "));
                             tooltip.addAll(SpellTooltip.spellEntry(icon.spell().id(), player, itemStack, true, 0));
                         } else {
                             tooltip.add(icon.spell().name());
                         }
-                        context.drawTooltip(textRenderer, tooltip, mouseX, mouseY);
+                        context.setComponentTooltipForNextFrame(font, tooltip, mouseX, mouseY);
                     }
                     return; // Only one tooltip at a time
                 }
@@ -295,20 +296,15 @@ public class SpellBindingScreen extends HandledScreen<SpellBindingScreenHandler>
     private static final SubTexture PLACEHOLDER_BOOK = new SubTexture(240, 0, 16, 16);
 
     @Override
-    protected void drawBackground(DrawContext context, float delta, int mouseX, int mouseY) {
-        DiffuseLighting.disableGuiDepthLighting();
-//        RenderSystem.setShader(GameRenderer::getPositionTexShader);
-//        RenderSystem.setShaderColor(1.0f, 1.0f, 1.0f, 1.0f);
-//        RenderSystem.setShaderTexture(0, TEXTURE);
-        int originX = (this.width - this.backgroundWidth) / 2;
-        int originY = (this.height - this.backgroundHeight) / 2;
+    public void extractBackground(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta) {
+        super.extractBackground(context, mouseX, mouseY, delta);
+        int originX = (this.width - this.imageWidth) / 2;
+        int originY = (this.height - this.imageHeight) / 2;
 
-        context.drawTexture(Pl, originX, originY - BACKGROUND_EXTRA_HEIGHT, 0, 0, this.backgroundWidth, this.backgroundHeight);
+        context.blit(RenderPipelines.GUI_TEXTURED, Pl, originX, originY - BACKGROUND_EXTRA_HEIGHT, 0, 0, this.imageWidth, this.imageHeight, 256, 256);
 
-        this.mainSlotIcon.render(this.handler, context, delta, this.x, this.y);
-        this.consumableSlotIcon.render(this.handler, context, delta, this.x, this.y);
-
-        DiffuseLighting.enableGuiDepthLighting();
+        this.mainSlotIcon.extractRenderState(this.menu, context, delta, this.leftPos, this.topPos);
+        this.consumableSlotIcon.extractRenderState(this.menu, context, delta, this.leftPos, this.topPos);
         this.updatePageControls();
         this.updateButtons(originX, originY);
         this.drawTierRows(context, mouseX, mouseY);
@@ -317,7 +313,7 @@ public class SpellBindingScreen extends HandledScreen<SpellBindingScreenHandler>
     private static final int PAGE_SIZE = 3;
 
     private boolean isPagingEnabled() {
-        var mode = handler.getMode();
+        var mode = menu.getMode();
         if (mode == SpellBinding.Mode.BOOK) {
             return bookViewModels.size() > PAGE_SIZE;
         }
@@ -325,7 +321,7 @@ public class SpellBindingScreen extends HandledScreen<SpellBindingScreenHandler>
     }
 
     private int maximalPageOffset() {
-        var mode = handler.getMode();
+        var mode = menu.getMode();
         if (mode == SpellBinding.Mode.BOOK) {
             return bookViewModels.size() - PAGE_SIZE;
         }
@@ -370,8 +366,8 @@ public class SpellBindingScreen extends HandledScreen<SpellBindingScreenHandler>
     }
 
 
-    private static final Identifier RUNES_FONT_ID = Identifier.of("minecraft", "alt");
-    private static final Style RUNE_STYLE = Style.EMPTY.withFont(RUNES_FONT_ID);
+    private static final Identifier RUNES_FONT_ID = Identifier.fromNamespaceAndPath("minecraft", "alt");
+    private static final Style RUNE_STYLE = Style.EMPTY.withFont(new FontDescription.Resource(RUNES_FONT_ID));
 
     // Helper record for grouping spells
     private record SpellData(
@@ -389,11 +385,11 @@ public class SpellBindingScreen extends HandledScreen<SpellBindingScreenHandler>
 
     private void updateButtons(int originX, int originY) {
         var tiers = new ArrayList<SpellBindingWidgets.TierRowViewModel>();
-        var player = MinecraftClient.getInstance().player;
-        var itemStack = handler.getStacks().get(0);
-        var lapisCount = handler.getLapisCount();
-        var mode = handler.getMode();
-        var world = MinecraftClient.getInstance().world;
+        var player = Minecraft.getInstance().player;
+        var itemStack = menu.getItems().get(0);
+        var lapisCount = menu.getLapisCount();
+        var mode = menu.getMode();
+        var world = Minecraft.getInstance().level;
 
         int oldSize = (mode == SpellBinding.Mode.BOOK) ? bookViewModels.size() : tierRowViewModels.size();  // Simplified check
 
@@ -402,20 +398,20 @@ public class SpellBindingScreen extends HandledScreen<SpellBindingScreenHandler>
             Map<Integer, List<SpellData>> spellsByTier = new LinkedHashMap<>();
 
             for (int i = 0; i < SpellBindingScreenHandler.MAXIMUM_SPELL_COUNT; i++) {
-                var rawId = handler.spellId[i];
+                var rawId = menu.spellId[i];
                 if (rawId < 0) continue; // Skip empty slots
 
-                var levelCost = handler.spellLevelCost[i];
-                var requirement = handler.spellLevelRequirement[i];
-                var lapisCost = handler.spellLapisCost[i];
-                var powered = handler.spellPoweredByLib[i] == 1;
+                var levelCost = menu.spellLevelCost[i];
+                var requirement = menu.spellLevelRequirement[i];
+                var lapisCost = menu.spellLapisCost[i];
+                var powered = menu.spellPoweredByLib[i] == 1;
 
                 switch (mode) {
                     case SPELL -> {
-                        var spellEntry = SpellRegistry.from(world).getEntry(rawId);
+                        var spellEntry = SpellRegistry.from(world).get(rawId);
                         if (spellEntry.isEmpty()) continue;
 
-                        var id = spellEntry.get().getKey().get().getValue();
+                        var id = spellEntry.get().unwrapKey().get().identifier();
                         var spell = spellEntry.get().value();
                         int tier = spell.tier;
 
@@ -423,9 +419,9 @@ public class SpellBindingScreen extends HandledScreen<SpellBindingScreenHandler>
                         boolean isDetailsPublic = powered || bindingState.state == SpellBinding.State.ApplyState.ALREADY_APPLIED;
                         boolean isEnabled = powered && bindingState.readyToApply(player, lapisCount);
 
-                        var text = Text.translatable(SpellTooltip.spellTranslationKey(id)).formatted(Formatting.GRAY);
+                        var text = Component.translatable(SpellTooltip.spellTranslationKey(id)).withStyle(ChatFormatting.GRAY);
                         if (!powered) {
-                            text = text.formatted(Formatting.OBFUSCATED).fillStyle(RUNE_STYLE);
+                            text = text.withStyle(ChatFormatting.OBFUSCATED).withStyle(RUNE_STYLE);
                         }
 
                         var spellViewModel = new SpellBindingWidgets.SpellViewModel(id, SpellRender.iconTexture(id), text);
@@ -447,7 +443,7 @@ public class SpellBindingScreen extends HandledScreen<SpellBindingScreenHandler>
                         SpellBinding.State bindingState = SpellBinding.State.forBook(levelCost, requirement);
                         boolean isEnabled = bindingState.readyToApply(player, lapisCount);
 
-                        var spellViewModel = new SpellBindingWidgets.SpellViewModel(null, null, displayStack.getName());
+                        var spellViewModel = new SpellBindingWidgets.SpellViewModel(null, null, displayStack.getHoverName());
 
                         spellsByTier.computeIfAbsent(0, k -> new ArrayList<>())
                             .add(new SpellData(i, spellViewModel, isEnabled, true, bindingState, displayStack));
@@ -558,13 +554,13 @@ public class SpellBindingScreen extends HandledScreen<SpellBindingScreenHandler>
         }
     }
 
-    private void drawTierRows(DrawContext context, int mouseX, int mouseY) {
-        var mode = handler.getMode();
+    private void drawTierRows(GuiGraphicsExtractor context, int mouseX, int mouseY) {
+        var mode = menu.getMode();
 
         if (mode == SpellBinding.Mode.BOOK) {
             // BOOK MODE: Render books
             for (var book : bookViewModels) {
-                SpellBindingWidgets.drawSpellBook(context, textRenderer, book, mouseX, mouseY);
+                SpellBindingWidgets.drawSpellBook(context, font, book, mouseX, mouseY);
             }
         } else {
             // SPELL MODE: Render tier rows with spell icons

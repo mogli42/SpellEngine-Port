@@ -3,17 +3,18 @@ package net.spell_engine.api.spell.registry;
 import com.google.gson.*;
 import com.mojang.datafixers.util.Pair;
 import com.mojang.serialization.*;
-import net.minecraft.registry.Registry;
-import net.minecraft.registry.RegistryKey;
-import net.minecraft.registry.entry.RegistryEntry;
-import net.minecraft.registry.entry.RegistryEntryList;
-import net.minecraft.registry.tag.TagKey;
-import net.minecraft.util.Identifier;
-import net.minecraft.util.dynamic.Codecs;
-import net.minecraft.world.World;
+import net.minecraft.core.Holder;
+import net.minecraft.core.HolderSet;
+import net.minecraft.core.Registry;
+import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.tags.TagKey;
+import net.minecraft.util.ExtraCodecs;
+import net.minecraft.world.level.Level;
 import net.spell_engine.api.spell.Spell;
 import org.jetbrains.annotations.Nullable;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -27,19 +28,25 @@ public class SpellRegistry {
      * instead of this:
      * `data/MOD/spell_engine/spell/SPELL.json`
      */
-    public static final Identifier ID = Identifier.ofVanilla("spell");
-    public static final RegistryKey<Registry<Spell>> KEY = RegistryKey.ofRegistry(ID);
-    public static Registry<Spell> from(World world) {
-        return world.getRegistryManager().get(KEY);
+    public static final Identifier ID = Identifier.withDefaultNamespace("spell");
+    public static final ResourceKey<Registry<Spell>> KEY = ResourceKey.createRegistryKey(ID);
+    public static Registry<Spell> from(Level world) {
+        return world.registryAccess().lookupOrThrow(KEY);
     }
     
     private static final Gson gson = new GsonBuilder().create();
-
+    /**
+     * Resolved eagerly on the class-init thread. `Spell` is a recursive type, and Gson builds such adapters lazily
+     * through a `FutureTypeAdapter`; when several registry-loading worker threads (NeoForge 26.1 loads registry
+     * elements in parallel) call `gson.fromJson(json, Spell.class)` for the first time concurrently, one of them
+     * fails with "Adapter for type with cyclic dependency has been used before dependency has been resolved".
+     */
+    private static final TypeAdapter<Spell> SPELL_ADAPTER = gson.getAdapter(Spell.class);
     /// Spell JSON as-is, handed to GSON. Only lossless over JSON-shaped ops:
     /// NBT has no boolean type and no mixed-type lists, so a JSON→NBT→JSON round trip breaks spells.
-    private static final Codec<Spell> JSON_CODEC = Codecs.JSON_ELEMENT.xmap(
-            json -> gson.fromJson(json, Spell.class),
-            spell -> gson.toJsonTree(spell)
+    private static final Codec<Spell> JSON_CODEC = ExtraCodecs.JSON.xmap(
+            json -> SPELL_ADAPTER.fromJsonTree(json),
+            spell -> SPELL_ADAPTER.toJsonTree(spell)
     );
 
     /// Spell JSON as opaque bytes, wrapped in a map so the serialized root is a compound.
@@ -47,9 +54,13 @@ public class SpellRegistry {
     private static final Codec<Spell> BYTES_CODEC = Codec.BYTE_BUFFER.comapFlatMap(
             encoded -> {
                 var json = new String(encoded.array(), StandardCharsets.UTF_8);
-                return DataResult.success(gson.fromJson(json, Spell.class));
+                try {
+                    return DataResult.success(SPELL_ADAPTER.fromJson(json));
+                } catch (IOException | JsonParseException e) {
+                    return DataResult.error(() -> "Failed to parse synced spell: " + e.getMessage());
+                }
             },
-            spell -> ByteBuffer.wrap(gson.toJson(spell).getBytes(StandardCharsets.UTF_8))
+            spell -> ByteBuffer.wrap(SPELL_ADAPTER.toJson(spell).getBytes(StandardCharsets.UTF_8))
     ).fieldOf("data").codec();
 
     /// Single codec for data pack loading and network sync.
@@ -78,14 +89,14 @@ public class SpellRegistry {
         }
     };
 
-    public static RegistryEntryList.Named<Spell> find(World world, Identifier tagId) {
-        var manager = world.getRegistryManager();
-        var lookup = manager.createRegistryLookup().getOrThrow(KEY); // RegistryEntryLookup<Spell>
-        var tag = TagKey.of(KEY, tagId);
+    public static HolderSet.Named<Spell> find(Level world, Identifier tagId) {
+        var manager = world.registryAccess();
+        var lookup = manager.lookupOrThrow(KEY);
+        var tag = TagKey.create(KEY, tagId);
         return lookup.getOrThrow(tag);
     }
 
-    public static List<RegistryEntry<Spell>> entries(World world, @Nullable Identifier id) {
+    public static List<Holder<Spell>> entries(Level world, @Nullable Identifier id) {
         try {
             return find(world, id).stream().toList();
         } catch (Exception e) {
@@ -93,17 +104,17 @@ public class SpellRegistry {
         }
     }
 
-    public static List<RegistryEntry<Spell>> entries(World world, @Nullable String pool) {
+    public static List<Holder<Spell>> entries(Level world, @Nullable String pool) {
         if (pool == null || pool.isEmpty()) {
             return List.of();
         }
-        var id = Identifier.of(pool);
+        var id = Identifier.parse(pool);
         return entries(world, id);
     }
 
-    public static Stream<RegistryEntry.Reference<Spell>> stream(World world) {
-        var manager = world.getRegistryManager();
-        var registry = manager.get(KEY);
-        return registry.streamEntries();
+    public static Stream<Holder.Reference<Spell>> stream(Level world) {
+        var manager = world.registryAccess();
+        var registry = manager.lookupOrThrow(KEY);
+        return registry.listElements();
     }
 }

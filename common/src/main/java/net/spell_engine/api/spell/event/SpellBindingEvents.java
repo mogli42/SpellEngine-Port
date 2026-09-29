@@ -1,11 +1,11 @@
 package net.spell_engine.api.spell.event;
 
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.item.ItemStack;
-import net.minecraft.registry.entry.RegistryEntry;
-import net.minecraft.util.Identifier;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.world.World;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.core.Holder;
+import net.minecraft.resources.Identifier;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.Level;
 import net.spell_engine.api.event.Event;
 import net.spell_engine.api.spell.Spell;
 import org.jetbrains.annotations.Nullable;
@@ -29,12 +29,12 @@ public class SpellBindingEvents {
          * @param world      the world of the binding table
          * @param pos        the position of the binding table
          */
-        record Args(PlayerEntity player,
-                    RegistryEntry<Spell> spell,
+        record Args(Player player,
+                    Holder<Spell> spell,
                     ItemStack itemStack,
                     @Nullable Identifier poolId,
                     boolean isComplete,
-                    World world,
+                    Level world,
                     BlockPos pos) {}
         void onSpellBound(Args args);
     }

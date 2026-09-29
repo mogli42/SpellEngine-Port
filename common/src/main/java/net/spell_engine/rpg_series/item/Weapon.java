@@ -1,26 +1,24 @@
 package net.spell_engine.rpg_series.item;
+import net.spell_engine.rpg_series.config.ConfigUtil;
+import net.minecraft.core.Registry;
+import net.minecraft.core.component.DataComponentPatch;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.tags.TagKey;
+import net.minecraft.world.entity.EquipmentSlotGroup;
+import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.item.CreativeModeTab;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.Rarity;
+import net.minecraft.world.item.ToolMaterial;
+import net.minecraft.world.item.component.ItemAttributeModifiers;
+import net.minecraft.world.level.block.Block;
 import net.spell_engine.Platform;
 
 import net.spell_engine.PlatformEvents;
-import net.minecraft.block.Block;
-import net.minecraft.component.ComponentChanges;
-import net.minecraft.component.type.AttributeModifierSlot;
-import net.minecraft.component.type.AttributeModifiersComponent;
-import net.minecraft.component.type.ToolComponent;
-import net.minecraft.entity.attribute.EntityAttributeModifier;
-import net.minecraft.entity.attribute.EntityAttributes;
-import net.minecraft.item.Item;
-import net.minecraft.item.ItemGroup;
-import net.minecraft.item.ToolMaterial;
-import net.minecraft.item.ToolMaterials;
-import net.minecraft.recipe.Ingredient;
-import net.minecraft.registry.Registries;
-import net.minecraft.registry.Registry;
-import net.minecraft.registry.RegistryKey;
-import net.minecraft.registry.tag.TagKey;
-import net.minecraft.util.Identifier;
-import net.minecraft.util.Lazy;
-import net.minecraft.util.Rarity;
 import net.spell_engine.rpg_series.config.AttributeModifier;
 import net.spell_engine.rpg_series.config.WeaponConfig;
 import net.spell_engine.api.spell.SpellDataComponents;
@@ -30,12 +28,11 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.List;
 import java.util.Map;
-import java.util.function.Supplier;
 
 public class Weapon {
 
     public interface Factory {
-        Item create(ToolMaterial material, Item.Settings settings);
+        Item create(ToolMaterial material, Item.Properties settings);
     }
 
     public static final class Entry {
@@ -67,7 +64,7 @@ public class Weapon {
         }
 
         public Identifier id() {
-            return Identifier.of(namespace, name);
+            return Identifier.fromNamespaceAndPath(namespace, name);
         }
 
         public Entry attribute(AttributeModifier attribute) {
@@ -95,7 +92,7 @@ public class Weapon {
             return material;
         }
 
-        public Item create(ToolMaterial material, Item.Settings settings) {
+        public Item create(ToolMaterial material, Item.Properties settings) {
             var item = factory.create(material, settings);
             registeredItem = item;
             return item;
@@ -120,18 +117,18 @@ public class Weapon {
         }
 
         public Entry withSpellChoices(String pool) {
-            this.spellContainer = this.spellContainer.withBindingPool(Identifier.of(pool));
+            this.spellContainer = this.spellContainer.withBindingPool(Identifier.parse(pool));
             this.spellChoice = SpellChoice.of(pool);
             return this;
         }
 
         /// Registers component changes to apply to this item when `spellId` is chosen from the pool.
         /// Lets the chosen spell drive the item's appearance (`custom_model_data`, `custom_name`, ...).
-        public Entry applyOnChoice(String spellId, ComponentChanges changes) {
+        public Entry applyOnChoice(String spellId, DataComponentPatch changes) {
             if (this.spellChoice == null) {
                 this.spellChoice = SpellChoice.EMPTY;
             }
-            this.spellChoice = this.spellChoice.withApplyOnChoice(Identifier.of(spellId), changes);
+            this.spellChoice = this.spellChoice.withApplyOnChoice(Identifier.parse(spellId), changes);
             return this;
         }
 
@@ -173,62 +170,53 @@ public class Weapon {
 
     // MARK: Material
 
-    public static class CustomMaterial implements ToolMaterial {
-        public static CustomMaterial matching(ToolMaterials vanillaMaterial, Supplier<Ingredient> repairIngredient) {
-            var material = new CustomMaterial();
-            material.durability = vanillaMaterial.getDurability();
-            material.miningSpeed = vanillaMaterial.getMiningSpeedMultiplier();
-            material.enchantability = vanillaMaterial.getEnchantability();
-            material.ingredient = new Lazy(repairIngredient);
-            material.inverseTag = vanillaMaterial.getInverseTag();
-            return material;
+    /// Wraps a vanilla {@link ToolMaterial} (a record since 1.21.2) with an optional repair item tag.
+    /// Repair goes through the vanilla `minecraft:repairable` component, which binds a *live* tag handle:
+    /// the tag contents are read at anvil time, so cross-mod items and datapack overrides just work.
+    public static class CustomMaterial {
+        /// @param repairItems `null` keeps the {@link ToolMaterial}'s own repair tag.
+        public static CustomMaterial matching(ToolMaterial vanillaMaterial, @Nullable TagKey<Item> repairItems) {
+            return new CustomMaterial(vanillaMaterial, repairItems);
         }
 
-        private TagKey<Block> inverseTag;
-        private int durability = 0;
-        private float miningSpeed = 0;
-        private int enchantability = 0;
-        private Lazy<Ingredient> ingredient = null;
+        private final ToolMaterial toolMaterial;
+        /// `null` keeps the {@link ToolMaterial}'s own repair tag.
+        private final @Nullable TagKey<Item> repairItems;
 
-        @Override
-        public int getDurability() {
-            return durability;
+        public CustomMaterial(ToolMaterial toolMaterial, @Nullable TagKey<Item> repairItems) {
+            this.toolMaterial = toolMaterial;
+            this.repairItems = repairItems;
         }
 
-        @Override
-        public float getMiningSpeedMultiplier() {
-            return miningSpeed;
+        public ToolMaterial toolMaterial() { return toolMaterial; }
+        public int getDurability() { return toolMaterial.durability(); }
+        public float getMiningSpeedMultiplier() { return toolMaterial.speed(); }
+        public int getEnchantability() { return toolMaterial.enchantmentValue(); }
+        public TagKey<Block> getInverseTag() { return toolMaterial.incorrectBlocksForDrops(); }
+        public @Nullable TagKey<Item> repairItems() { return repairItems; }
+
+        /// Durability, enchantability and repair — no TOOL component.
+        ///
+        /// `Item.Properties.repairable(TagKey)` looks the tag up through the ITEM registry, which must still be
+        /// **unfrozen** — always the case while items are registered at mod init. Never assemble `Item.Properties`
+        /// after registry freeze. (The resulting `minecraft:repairable` component, like every other component,
+        /// is bound to the item at resource reload — see `DataComponentInitializers`.)
+        public Item.Properties applyBaseSettings(Item.Properties settings) {
+            settings = settings.durability(toolMaterial.durability()).enchantable(toolMaterial.enchantmentValue());
+            settings.repairable(repairItems != null ? repairItems : toolMaterial.repairItems());
+            return settings;
         }
 
-        @Override
-        public float getAttackDamage() {
-            return 0;
-        }
-
-        @Override
-        public TagKey<Block> getInverseTag() {
-            return inverseTag;
-        }
-
-        @Override
-        public int getEnchantability() {
-            return enchantability;
-        }
-
-        @Override
-        public Ingredient getRepairIngredient() {
-            return (Ingredient)this.ingredient.get();
-        }
-
-        @Override
-        public ToolComponent createComponent(TagKey<Block> tag) {
-            return ToolMaterial.super.createComponent(tag);
+        /// Base settings plus the vanilla sword TOOL/WEAPON components. Attack attributes must be applied afterwards.
+        public Item.Properties applySwordSettings(Item.Properties settings) {
+            toolMaterial.applySwordProperties(settings, 0, 0);
+            return applyBaseSettings(settings);
         }
     }
 
     // MARK: Registration
 
-    public static void register(Map<String, WeaponConfig> configs, List<Entry> entries, RegistryKey<ItemGroup> itemGroupKey) {
+    public static void register(Map<String, WeaponConfig> configs, List<Entry> entries, ResourceKey<CreativeModeTab> itemGroupKey) {
         for(var entry: entries) {
             var config = configs.get(entry.name);
             if (config == null) {
@@ -237,8 +225,16 @@ public class Weapon {
             }
             if (!entry.isRequiredModInstalled()) { continue; }
 
-            var settings = new Item.Settings()
-                    .attributeModifiers(attributesFrom(config));
+            var settings = new Item.Properties().setId(ResourceKey.create(Registries.ITEM, entry.id()));
+            switch (entry.category) {
+                case DAMAGE_STAFF, HEALING_STAFF, DAMAGE_WAND, HEALING_WAND -> entry.material.applyBaseSettings(settings);
+                default -> entry.material.applySwordSettings(settings);
+            }
+            // Attack attributes come from config, overriding whatever the vanilla material set.
+            // Components bind at resource reload (26.1): a delayed step appended after the material's own
+            // `attributes(...)` step wins, and the attribute ids in the config are resolved at reload time.
+            final var appliedConfig = config;
+            settings.delayedComponent(DataComponents.ATTRIBUTE_MODIFIERS, context -> attributesFrom(appliedConfig));
             if (entry.rarity != Rarity.COMMON) {
                 settings = settings.rarity(entry.rarity);
             }
@@ -252,42 +248,41 @@ public class Weapon {
 
             var tier = entry.lootProperties().tier();
             if (tier >= 3) {
-                settings.fireproof();
+                settings.fireResistant();
             }
-            var item = entry.create(entry.material, settings);
-            Registry.register(Registries.ITEM, entry.id(), item);
+            var item = entry.create(entry.material.toolMaterial(), settings);
+            Registry.register(BuiltInRegistries.ITEM, entry.id(), item);
         }
         PlatformEvents.onItemGroupModify(itemGroupKey, (content, context) -> {
             for(var entry: entries) {
-                content.add(entry.item());
+                content.accept(entry.item());
             }
         });
     }
 
-    public static AttributeModifiersComponent attributesFrom(WeaponConfig config) {
-        AttributeModifiersComponent.Builder builder = AttributeModifiersComponent.builder();
-        builder.add(EntityAttributes.GENERIC_ATTACK_DAMAGE,
-                new EntityAttributeModifier(
-                        Item.BASE_ATTACK_DAMAGE_MODIFIER_ID,
+    public static ItemAttributeModifiers attributesFrom(WeaponConfig config) {
+        ItemAttributeModifiers.Builder builder = ItemAttributeModifiers.builder();
+        builder.add(Attributes.ATTACK_DAMAGE,
+                new net.minecraft.world.entity.ai.attributes.AttributeModifier(
+                        Item.BASE_ATTACK_DAMAGE_ID,
                         config.attack_damage,
-                        EntityAttributeModifier.Operation.ADD_VALUE),
-                AttributeModifierSlot.MAINHAND);
-        builder.add(EntityAttributes.GENERIC_ATTACK_SPEED,
-                new EntityAttributeModifier(
-                        Item.BASE_ATTACK_SPEED_MODIFIER_ID,
+                        net.minecraft.world.entity.ai.attributes.AttributeModifier.Operation.ADD_VALUE),
+                EquipmentSlotGroup.MAINHAND);
+        builder.add(Attributes.ATTACK_SPEED,
+                new net.minecraft.world.entity.ai.attributes.AttributeModifier(
+                        Item.BASE_ATTACK_SPEED_ID,
                         config.attack_speed,
-                        EntityAttributeModifier.Operation.ADD_VALUE),
-                AttributeModifierSlot.MAINHAND);
+                        net.minecraft.world.entity.ai.attributes.AttributeModifier.Operation.ADD_VALUE),
+                EquipmentSlotGroup.MAINHAND);
         for(var attribute: config.selectedAttributes()) {
             try {
-                var attributeId = Identifier.of(attribute.attribute);
-                var entityAttribute = Registries.ATTRIBUTE.getEntry(attributeId).get();
+                var entityAttribute = ConfigUtil.attribute(attribute.attribute).orElseThrow();
                 builder.add(entityAttribute,
-                        new EntityAttributeModifier(
+                        new net.minecraft.world.entity.ai.attributes.AttributeModifier(
                                 equipmentBonusId,
                                 attribute.value,
                                 attribute.operation),
-                        AttributeModifierSlot.MAINHAND);
+                        EquipmentSlotGroup.MAINHAND);
             } catch (Exception e) {
                 System.err.println("Failed to add item attribute modifier: " + e.getMessage());
             }
@@ -295,18 +290,17 @@ public class Weapon {
         return builder.build();
     }
 
-    public static AttributeModifiersComponent attributesFrom(List<AttributeModifier> attributes) {
-        AttributeModifiersComponent.Builder builder = AttributeModifiersComponent.builder();
+    public static ItemAttributeModifiers attributesFrom(List<AttributeModifier> attributes) {
+        ItemAttributeModifiers.Builder builder = ItemAttributeModifiers.builder();
         for(var attribute: attributes) {
             try {
-                var attributeId = Identifier.of(attribute.attribute);
-                var entityAttribute = Registries.ATTRIBUTE.getEntry(attributeId).get();
+                var entityAttribute = ConfigUtil.attribute(attribute.attribute).orElseThrow();
                 builder.add(entityAttribute,
-                        new EntityAttributeModifier(
+                        new net.minecraft.world.entity.ai.attributes.AttributeModifier(
                                 equipmentBonusId,
                                 attribute.value,
                                 attribute.operation),
-                        AttributeModifierSlot.MAINHAND);
+                        EquipmentSlotGroup.MAINHAND);
             } catch (Exception e) {
                 System.err.println("Failed to add item attribute modifier: " + e.getMessage());
             }
@@ -314,7 +308,6 @@ public class Weapon {
         return builder.build();
     }
 
-    private static final Identifier equipmentBonusId = Identifier.of("equipment_bonus");
-    private static final Identifier attackDamageId = Identifier.of("generic.attack_damage");
-    private static final Identifier projectileDamageId = Identifier.of("projectile_damage", "generic");
+    private static final Identifier equipmentBonusId = Identifier.parse("equipment_bonus");
+    private static final Identifier projectileDamageId = Identifier.fromNamespaceAndPath("projectile_damage", "generic");
 }

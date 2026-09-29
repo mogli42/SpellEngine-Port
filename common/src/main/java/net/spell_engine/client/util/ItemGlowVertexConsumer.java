@@ -1,6 +1,6 @@
 package net.spell_engine.client.util;
 
-import net.minecraft.client.render.VertexConsumer;
+import com.mojang.blaze3d.vertex.VertexConsumer;
 import net.spell_engine.api.render.CustomLayers;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
@@ -23,9 +23,31 @@ public class ItemGlowVertexConsumer implements VertexConsumer {
     private final Vector3f scratch = new Vector3f();
     private final int red, green, blue, alpha;
 
+    @Override
+    public VertexConsumer setColor(int argb) {
+        return setColor(net.minecraft.util.ARGB.red(argb), net.minecraft.util.ARGB.green(argb), net.minecraft.util.ARGB.blue(argb), net.minecraft.util.ARGB.alpha(argb));
+    }
+
+    @Override
+    public VertexConsumer setLineWidth(float width) {
+        delegate.setLineWidth(width);
+        return this;
+    }
+
+    private final float uvScaleU, uvScaleV;
+
     public ItemGlowVertexConsumer(VertexConsumer delegate, Color color) {
+        this(delegate, color, new org.joml.Vector2f(1F, 1F), true);
+    }
+
+    /// @param uvScale multiplies the atlas UVs (per axis) before the scroll (atlas-size compensation, see
+    ///                `CustomLayers.itemGlowUvScale`)
+    /// @param scroll  apply the scroll matrix here (emissive pass); false when the shader applies it (glint pass)
+    public ItemGlowVertexConsumer(VertexConsumer delegate, Color color, org.joml.Vector2f uvScale, boolean scroll) {
         this.delegate = delegate;
-        this.textureMatrix = CustomLayers.itemGlowTextureMatrix();
+        this.uvScaleU = uvScale.x;
+        this.uvScaleV = uvScale.y;
+        this.textureMatrix = scroll ? CustomLayers.itemGlowTextureMatrix() : new Matrix4f();
         var tint = color.toIntFormat();
         this.red = tint.red();
         this.green = tint.green();
@@ -34,39 +56,45 @@ public class ItemGlowVertexConsumer implements VertexConsumer {
     }
 
     @Override
-    public VertexConsumer texture(float u, float v) {
-        var scrolled = textureMatrix.transformPosition(scratch.set(u, v, 0F));
-        delegate.texture(scrolled.x(), scrolled.y());
+    public VertexConsumer setUv(float u, float v) {
+        var scrolled = textureMatrix.transformPosition(scratch.set(u * uvScaleU, v * uvScaleV, 0F));
+        delegate.setUv(scrolled.x(), scrolled.y());
         return this;
     }
 
     @Override
-    public VertexConsumer color(int red, int green, int blue, int alpha) {
-        delegate.color(this.red, this.green, this.blue, this.alpha);
+    public VertexConsumer setColor(int red, int green, int blue, int alpha) {
+        delegate.setColor(this.red, this.green, this.blue, this.alpha);
         return this;
     }
 
     @Override
-    public VertexConsumer vertex(float x, float y, float z) {
-        delegate.vertex(x, y, z);
+    public VertexConsumer addVertex(float x, float y, float z) {
+        delegate.addVertex(x, y, z);
         return this;
     }
 
     @Override
-    public VertexConsumer overlay(int u, int v) {
-        delegate.overlay(u, v);
+    public VertexConsumer setUv1(int u, int v) {
+        delegate.setUv1(u, v);
         return this;
     }
 
     @Override
-    public VertexConsumer light(int u, int v) {
-        delegate.light(u, v);
+    public VertexConsumer setUv2(int u, int v) {
+        delegate.setUv2(u, v);
         return this;
     }
 
     @Override
-    public VertexConsumer normal(float x, float y, float z) {
-        delegate.normal(x, y, z);
+    public VertexConsumer setUv3(float u, float v) {
+        delegate.setUv3(u, v);
+        return this;
+    }
+
+    @Override
+    public VertexConsumer setNormal(float x, float y, float z) {
+        delegate.setNormal(x, y, z);
         return this;
     }
 }

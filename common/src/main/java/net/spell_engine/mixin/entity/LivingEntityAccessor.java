@@ -1,26 +1,20 @@
 package net.spell_engine.mixin.entity;
 
-import net.minecraft.entity.LivingEntity;
-import net.minecraft.entity.damage.DamageSource;
+import net.minecraft.world.entity.LivingEntity;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.gen.Accessor;
 import org.spongepowered.asm.mixin.gen.Invoker;
 
 @Mixin(LivingEntity.class)
 public interface LivingEntityAccessor {
-    @Accessor("lastDamageTaken")
+    @Accessor("lastHurt")
     float spellEngine_getLastDamageTaken();
-    @Accessor("lastDamageSource")
-    DamageSource spellEngine_getLastDamageSource();
-//    @Accessor
-//    int getLastAttackedTicks();
-//    @Accessor("lastAttackedTicks")
-//    void setLastAttackedTicks(int lastAttackedTicks);
-    @Invoker("turnHead")
-    float spellEngine_invoke_TurnHead(float bodyRotation, float headRotation);
 
-    @Accessor("lastAttackedTicks")
-    int spellEngine_getLastAttackedTicks();
-    @Accessor("lastAttackedTicks")
+    @Invoker("tickHeadTurn")
+    void spellEngine_invoke_TurnHead(float bodyRotation);
+
+    /// Read side is vanilla's public `getLastHurtMobTimestamp()`; there is no vanilla setter
+    /// (`setLastHurtMob` also writes `lastHurtByMob`), hence this one.
+    @Accessor("lastHurtMobTimestamp")
     void spellEngine_setLastAttackedTicks(int lastAttackedTicks);
 }

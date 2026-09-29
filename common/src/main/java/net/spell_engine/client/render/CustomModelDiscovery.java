@@ -1,12 +1,12 @@
 package net.spell_engine.client.render;
 
-import net.minecraft.resource.ResourceManager;
-import net.minecraft.util.Identifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
+import net.minecraft.resources.Identifier;
+import net.minecraft.server.packs.resources.ResourceManager;
 
 /**
  * Platform-agnostic utility for discovering spell-related models across all loaded mods.
@@ -17,9 +17,9 @@ public class CustomModelDiscovery {
 
     private static final String MODEL_FOLDER = "models";
     // Model paths to scan for automatic discovery
+    // Spell book / scroll models are addressed through vanilla item-model definitions since 1.21.4
+    // (`assets/<ns>/items/spell_book/<pool>.json`), so only the raw fx models are discovered here.
     private static final String[] MODEL_PATHS = {
-        "/item/spell_book",
-        "/item/spell_scroll",
         "/spell_projectile",
         "/spell_effect"
     };
@@ -32,11 +32,12 @@ public class CustomModelDiscovery {
      * @return List of discovered model Identifiers (without platform-specific wrapping)
      */
     public static List<Identifier> discoverScrollModels(ResourceManager resourceManager) {
-        List<Identifier> discoveredModels = new ArrayList<>();
+        // LinkedHashSet: the same model file can be reported once per resource pack layer
+        var discoveredModels = new java.util.LinkedHashSet<Identifier>();
 
         try {
             // Find all resources matching the pattern
-            var resources = resourceManager.findResources(
+            var resources = resourceManager.listResources(
                     MODEL_FOLDER,
                     id -> {
                         var path = id.getPath();
@@ -66,7 +67,7 @@ public class CustomModelDiscovery {
         } catch (Exception e) {
             LOGGER.error("Error scanning for spell models in {}", e);
         }
-        return discoveredModels;
+        return new ArrayList<>(discoveredModels);
     }
 
     /**
@@ -100,6 +101,6 @@ public class CustomModelDiscovery {
         }
         path = path.substring(0, path.length() - ".json".length());
 
-        return Identifier.of(resourceId.getNamespace(), path);
+        return Identifier.fromNamespaceAndPath(resourceId.getNamespace(), path);
     }
 }

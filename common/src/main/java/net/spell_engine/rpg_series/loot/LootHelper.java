@@ -1,30 +1,36 @@
 package net.spell_engine.rpg_series.loot;
 
-import net.minecraft.item.Item;
-import net.minecraft.item.Items;
-import net.minecraft.loot.LootPool;
-import net.minecraft.loot.LootTable;
-import net.minecraft.loot.condition.KilledByPlayerLootCondition;
-import net.minecraft.loot.entry.CombinedEntry;
-import net.minecraft.loot.entry.ItemEntry;
-import net.minecraft.loot.entry.LeafEntry;
-import net.minecraft.loot.entry.LootPoolEntry;
-import net.minecraft.loot.entry.LootTableEntry;
-import net.minecraft.loot.function.EnchantRandomlyLootFunction;
-import net.minecraft.loot.function.EnchantWithLevelsLootFunction;
-import net.minecraft.loot.provider.number.BinomialLootNumberProvider;
-import net.minecraft.loot.provider.number.ConstantLootNumberProvider;
-import net.minecraft.loot.provider.number.LootNumberProvider;
-import net.minecraft.loot.provider.number.UniformLootNumberProvider;
-import net.minecraft.registry.Registries;
-import net.minecraft.registry.RegistryKeys;
-import net.minecraft.registry.RegistryWrapper;
-import net.minecraft.registry.tag.TagKey;
-import net.minecraft.util.Identifier;
+import net.minecraft.core.HolderGetter;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.resources.Identifier;
+import net.minecraft.tags.TagKey;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.storage.loot.LootPool;
+import net.minecraft.world.level.storage.loot.LootTable;
+import net.minecraft.world.level.storage.loot.entries.CompositeEntryBase;
+import net.minecraft.world.level.storage.loot.entries.LootItem;
+import net.minecraft.world.level.storage.loot.entries.LootPoolEntryContainer;
+import net.minecraft.world.level.storage.loot.entries.UniformContainerBase;
+import net.minecraft.world.level.storage.loot.entries.NestedLootTable;
+import net.minecraft.world.level.storage.loot.functions.EnchantRandomlyFunction;
+import net.minecraft.world.level.storage.loot.functions.EnchantWithLevelsFunction;
+import net.minecraft.world.level.storage.loot.functions.LootItemFunction;
+import net.minecraft.world.level.storage.loot.functions.SequenceFunction;
+import net.minecraft.world.level.storage.loot.predicates.LootItemKilledByPlayerCondition;
+import net.minecraft.core.Holder;
+import net.minecraft.world.level.storage.loot.providers.number.floats.ContextFloatProviders;
+import net.minecraft.world.level.storage.loot.providers.number.ints.ConstantValue;
+import net.minecraft.world.level.storage.loot.providers.number.ints.ContextIntProvider;
+import net.minecraft.world.level.storage.loot.providers.number.ints.ContextIntProviders;
+import net.minecraft.world.level.storage.loot.providers.number.ints.UniformGenerator;
 import net.spell_engine.mixin.loot.CombinedEntryAccessor;
 import net.spell_engine.mixin.loot.EnchantWithLevelsLootFunctionAccessor;
 import net.spell_engine.mixin.loot.ItemEntryAccessor;
 import net.spell_engine.mixin.loot.LeafEntryAccessor;
+import net.spell_engine.mixin.loot.LootPoolEntryContainerAccessor;
+import net.spell_engine.mixin.loot.SequenceFunctionAccessor;
 import net.spell_engine.rpg_series.RPGSeriesCore;
 import net.spell_engine.rpg_series.tags.RPGSeriesItemTags;
 import net.spell_engine.spellbinding.SpellBindRandomlyLootFunction;
@@ -86,11 +92,11 @@ public class LootHelper {
             if (updatedTags.contains(tagString)) {
                 continue;
             }
-            var tagId = Identifier.of(tagString);
-            TagKey<Item> tag = TagKey.of(RegistryKeys.ITEM, tagId);
+            var tagId = Identifier.parse(tagString);
+            TagKey<Item> tag = TagKey.create(Registries.ITEM, tagId);
             var itemList = new ArrayList<String>();
-            Registries.ITEM.iterateEntries(tag).forEach((itemEntry) -> {
-                var itemId = itemEntry.getKey().get().getValue();
+            BuiltInRegistries.ITEM.getTagOrEmpty(tag).forEach((itemEntry) -> {
+                var itemId = itemEntry.unwrapKey().get().identifier();
                 itemList.add(itemId.toString());
             });
             LootHelper.TAG_CACHE.value.cache.put(tagString, itemList);
@@ -140,7 +146,7 @@ public class LootHelper {
 
     // MARK: Injection
 
-    public static void configure(RegistryWrapper.WrapperLookup registries, Identifier lootTableId,
+    public static void configure(HolderGetter.Provider registries, Identifier lootTableId,
                                  List<LootPool> existingPools, Consumer<LootPool> poolSink,
                                  LootConfig config, String configName) {
         boolean isEntityLootTable = lootTableId.getPath().startsWith("entities");
@@ -170,7 +176,7 @@ public class LootHelper {
         configureFallback(registries, tableId, existingPools, poolSink, config, configName, isEntityLootTable);
     }
 
-    private static void configureFallback(RegistryWrapper.WrapperLookup registries, String tableId,
+    private static void configureFallback(HolderGetter.Provider registries, String tableId,
                                           List<LootPool> existingPools, Consumer<LootPool> poolSink,
                                           LootConfig config, String configName, boolean isEntityLootTable) {
         var fallback = config.fallback;
@@ -262,15 +268,15 @@ public class LootHelper {
         var rolls = fallback.max_rolls > 0 ? Math.min(totalRolls, fallback.max_rolls) : totalRolls;
         var bonusRolls = totalBonusRolls * (rolls / totalRolls);
 
-        LootPool.Builder lootPoolBuilder = LootPool.builder();
+        LootPool.Builder lootPoolBuilder = LootPool.lootPool();
         if (isEntityLootTable) {
-            lootPoolBuilder.conditionally(KilledByPlayerLootCondition.builder());
+            lootPoolBuilder.when(LootItemKilledByPlayerCondition.killedByPlayer());
         }
         applyRolls(lootPoolBuilder, rolls, bonusRolls);
         for (var part: parts) {
             // Parts are picked proportionally to their own rolls, each an inline table keeping its item weights intact
             var weight = Math.max(1, Math.round(FALLBACK_PART_WEIGHT_SCALE * part.rolls() / totalRolls));
-            lootPoolBuilder.with(LootTableEntry.builder(LootTable.builder().pool(part.pool()).build()).weight(weight));
+            lootPoolBuilder.add(NestedLootTable.inlineLootTable(LootTable.lootTable().withPool(part.pool()).build()).setWeight(weight));
         }
         poolSink.accept(lootPoolBuilder.build());
 
@@ -322,8 +328,8 @@ public class LootHelper {
         return result;
     }
 
-    private static void collect(LootPoolEntry entry, LinkedHashMap<String, ItemOccurrence> items, int[] total) {
-        if (entry instanceof CombinedEntry) {
+    private static void collect(LootPoolEntryContainer entry, LinkedHashMap<String, ItemOccurrence> items, int[] total) {
+        if (entry instanceof CompositeEntryBase) {
             for (var child: ((CombinedEntryAccessor) entry).spellEngine_getChildren()) {
                 collect(child, items, total);
             }
@@ -335,32 +341,32 @@ public class LootHelper {
             }
             return;
         }
-        if (!(entry instanceof LeafEntry)) { return; }
+        if (!(entry instanceof UniformContainerBase)) { return; }
         var leaf = (LeafEntryAccessor) entry;
         var weight = leaf.spellEngine_getWeight();
         total[0] += weight;
-        if (entry instanceof ItemEntry) {
+        if (entry instanceof LootItem) {
             var item = ((ItemEntryAccessor) entry).spellEngine_getItem().value();
-            var itemId = Registries.ITEM.getId(item).toString();
+            var itemId = BuiltInRegistries.ITEM.getKey(item).toString();
             var occurrence = items.computeIfAbsent(itemId, k -> new ItemOccurrence());
             boolean enchanted = false;
-            for (var function: leaf.spellEngine_getFunctions()) {
-                if (function instanceof EnchantWithLevelsLootFunction) {
+            for (var function: functionsOf(entry)) {
+                if (function instanceof EnchantWithLevelsFunction) {
                     enchanted = true;
                     var levels = ((EnchantWithLevelsLootFunctionAccessor) function).spellEngine_getLevels();
                     Float min = null, max = null;
-                    if (levels instanceof ConstantLootNumberProvider constant) {
-                        min = constant.value(); max = constant.value();
-                    } else if (levels instanceof UniformLootNumberProvider uniform
-                            && uniform.min() instanceof ConstantLootNumberProvider lo
-                            && uniform.max() instanceof ConstantLootNumberProvider hi) {
-                        min = lo.value(); max = hi.value();
+                    if (levels.value() instanceof ConstantValue constant) {
+                        min = (float) constant.value(); max = (float) constant.value();
+                    } else if (levels.value() instanceof UniformGenerator uniform
+                            && uniform.min().value() instanceof ConstantValue lo
+                            && uniform.max().value() instanceof ConstantValue hi) {
+                        min = (float) lo.value(); max = (float) hi.value();
                     }
                     if (min != null) {
                         occurrence.minLevel = occurrence.minLevel == null ? min : Math.min(occurrence.minLevel, min);
                         occurrence.maxLevel = occurrence.maxLevel == null ? max : Math.max(occurrence.maxLevel, max);
                     }
-                } else if (function instanceof EnchantRandomlyLootFunction) {
+                } else if (function instanceof EnchantRandomlyFunction) {
                     enchanted = true;
                 }
             }
@@ -371,6 +377,24 @@ public class LootHelper {
             }
         }
         // Table references and tag entries are not resolved (referenced tables may not be parsed yet).
+    }
+
+    /// The functions applied by an entry, with `SequenceFunction` wrappers flattened.
+    private static List<LootItemFunction> functionsOf(LootPoolEntryContainer entry) {
+        var result = new ArrayList<LootItemFunction>();
+        ((LootPoolEntryContainerAccessor) entry).spellEngine_getModifier()
+                .ifPresent(holder -> flattenFunction(holder.value(), result));
+        return result;
+    }
+
+    private static void flattenFunction(LootItemFunction function, List<LootItemFunction> result) {
+        if (function instanceof SequenceFunction sequence) {
+            for (var child: ((SequenceFunctionAccessor) sequence).spellEngine_getFunctions()) {
+                flattenFunction(child.value(), result);
+            }
+        } else {
+            result.add(function);
+        }
     }
 
     /// Mirrors the enchanted/plain mix of the matched reference gear onto the injected entries:
@@ -391,14 +415,14 @@ public class LootHelper {
     // MARK: Pool building
 
     /// Null when none of the entries resolve to an item (for example: tag of a mod not installed).
-    @Nullable private static LootPool.Builder buildPool(RegistryWrapper.WrapperLookup registries, List<LootConfig.Pool.Entry> entries,
+    @Nullable private static LootPool.Builder buildPool(HolderGetter.Provider registries, List<LootConfig.Pool.Entry> entries,
                                       float rolls, float bonusRolls, boolean killedByPlayerOnly, @Nullable EnchantMix mix,
                                       @Nullable LootConfig.Behavior behavior) {
-        LootPool.Builder lootPoolBuilder = LootPool.builder();
+        LootPool.Builder lootPoolBuilder = LootPool.lootPool();
         boolean classAffiliation = behavior != null && behavior.classAffiliationActive();
         int[] entryCount = { 0 };
         if (killedByPlayerOnly) {
-            lootPoolBuilder.conditionally(KilledByPlayerLootCondition.builder());
+            lootPoolBuilder.when(LootItemKilledByPlayerCondition.killedByPlayer());
         }
 
         applyRolls(lootPoolBuilder, rolls, bonusRolls);
@@ -427,16 +451,16 @@ public class LootHelper {
                     ? AffiliationGroupEntry.builder(behavior.class_affiliation_extra_weight,
                             behavior.class_affiliation_weight_operation, behavior.class_affiliation_include_team)
                     : null;
-            Consumer<LootPoolEntry.Builder<?>> entrySink = lootEntry -> {
-                if (group != null) { group.with(lootEntry); } else { lootPoolBuilder.with(lootEntry); }
+            Consumer<LootPoolEntryContainer.Builder<?>> entrySink = lootEntry -> {
+                if (group != null) { group.with(lootEntry); } else { lootPoolBuilder.add(lootEntry); }
                 entryCount[0] += 1;
             };
 
             for (var itemId: itemList) {
-                var item = Registries.ITEM.get(Identifier.of(itemId));
+                var item = BuiltInRegistries.ITEM.getValue(Identifier.parse(itemId));
                 if (item == null || item == Items.AIR) { continue; } // Unknown id resolves to air
-                var lootEntry = ItemEntry.builder(item)
-                        .weight(weight);
+                var lootEntry = LootItem.lootTableItem(item)
+                        .setWeight(weight);
                 var lenient = entry.filtersLenient();
                 var filtersMatch = lenient ? filters.isEmpty() : true;
                 for (var filter: filters) {
@@ -455,18 +479,18 @@ public class LootHelper {
                 if (mix != null && spellBind == null) {
                     // Mirror the source: a plain and an enchanted copy, weighted like the reference gear
                     if (mix.plainWeight() > 0) {
-                        entrySink.accept(ItemEntry.builder(item).weight(weight * mix.plainWeight()));
+                        entrySink.accept(LootItem.lootTableItem(item).setWeight(weight * mix.plainWeight()));
                     }
                     if (mix.enchantedWeight() > 0) {
                         var levels = mix.levels(enchant);
-                        entrySink.accept(ItemEntry.builder(item).weight(weight * mix.enchantedWeight())
-                                .apply(EnchantWithLevelsLootFunction.builder(registries, numberProvider(levels.min_power, levels.max_power))));
+                        entrySink.accept(LootItem.lootTableItem(item).setWeight(weight * mix.enchantedWeight())
+                                .apply(EnchantWithLevelsFunction.enchantWithLevels(registries.lookupOrThrow(Registries.ENCHANTMENT), numberProvider(levels.min_power, levels.max_power))));
                     }
                     continue;
                 }
 
                 if (enchant != null && enchant.isValid()) {
-                    var enchantFunction = EnchantWithLevelsLootFunction.builder(registries, numberProvider(enchant.min_power, enchant.max_power));
+                    var enchantFunction = EnchantWithLevelsFunction.enchantWithLevels(registries.lookupOrThrow(Registries.ENCHANTMENT), numberProvider(enchant.min_power, enchant.max_power));
                     lootEntry.apply(enchantFunction);
                 }
                 if (spellBind != null && spellBind.isValid()) {
@@ -479,7 +503,7 @@ public class LootHelper {
                 entrySink.accept(lootEntry);
             }
             if (group != null && !group.isEmpty()) {
-                lootPoolBuilder.with(group);
+                lootPoolBuilder.add(group);
             }
         }
         return entryCount[0] > 0 ? lootPoolBuilder : null;
@@ -490,8 +514,8 @@ public class LootHelper {
         rolls = rolls > 0 ? rolls : 1F;
         var attempts = Math.ceil(rolls);
         var chance = rolls / attempts;
-        lootPoolBuilder.rolls(BinomialLootNumberProvider.create((int) attempts, (float) chance));
-        lootPoolBuilder.bonusRolls(ConstantLootNumberProvider.create(bonusRolls));
+        lootPoolBuilder.setRolls(ContextIntProviders.binomial((int) attempts, (float) chance));
+        lootPoolBuilder.setBonusRolls(ContextFloatProviders.exactly(bonusRolls));
     }
 
     // MARK: Pattern matching (tag-cache backed, since tags are not loaded yet)
@@ -535,11 +559,13 @@ public class LootHelper {
         return (tier == null || tier < 0) ? -1 : tier;
     }
 
-    private static LootNumberProvider numberProvider(float min, float max) {
+    /// 26.3: every consumer (enchant levels, spell tier, spell count) takes an int provider.
+    /// Config bounds are rounded, matching how the former float providers were read as ints (`Math.round`).
+    private static Holder<ContextIntProvider> numberProvider(float min, float max) {
         if (max <= min) {
-            return ConstantLootNumberProvider.create(min);
+            return ContextIntProviders.exactly(Math.round(min));
         } else {
-            return UniformLootNumberProvider.create(min, max);
+            return ContextIntProviders.between(Math.round(min), Math.round(max));
         }
     }
 }

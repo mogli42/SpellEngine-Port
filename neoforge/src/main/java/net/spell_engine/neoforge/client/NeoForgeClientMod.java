@@ -1,10 +1,8 @@
 package net.spell_engine.neoforge.client;
 
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.util.ModelIdentifier;
-import net.minecraft.util.Identifier;
-import net.minecraft.particle.ParticleEffect;
-import net.minecraft.particle.ParticleType;
+import net.minecraft.client.Minecraft;
+import net.minecraft.core.particles.ParticleOptions;
+import net.minecraft.core.particles.ParticleType;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.ModLoadingContext;
@@ -16,7 +14,7 @@ import net.neoforged.neoforge.client.event.RegisterGuiLayersEvent;
 import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
 import net.neoforged.neoforge.client.event.RegisterMenuScreensEvent;
 import net.neoforged.neoforge.client.event.RegisterParticleProvidersEvent;
-import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
+import net.neoforged.neoforge.client.event.SubmitCustomGeometryEvent;
 import net.neoforged.neoforge.client.gui.IConfigScreenFactory;
 import net.neoforged.neoforge.client.gui.VanillaGuiLayers;
 import net.neoforged.neoforge.common.NeoForge;
@@ -26,10 +24,8 @@ import net.spell_engine.client.SpellEngineClient;
 import net.spell_engine.client.gui.ConfigMenuScreen;
 import net.spell_engine.client.gui.HudRenderHelper;
 import net.neoforged.neoforge.client.settings.KeyConflictContext;
-import net.spell_engine.client.input.GuiKeyBinding;
 import net.spell_engine.client.input.Keybindings;
 import net.spell_engine.client.render.BeamRenderer;
-import net.spell_engine.client.render.CustomModelRegistry;
 import net.spell_engine.client.render.SpellCloudRenderer;
 import net.spell_engine.client.render.SpellModelEffectRenderer;
 import net.spell_engine.client.render.SpellProjectileRenderer;
@@ -46,37 +42,41 @@ public class NeoForgeClientMod {
     @SubscribeEvent
     public static void onClientSetup(FMLClientSetupEvent event) {
         SpellEngineClient.init();
+        NeoForgeModelDiscovery.install();
 
         // Game-bus client events (tooltip lines, beam world-render pass) — subscribed here since this
         // class is on the mod bus; the callbacks live in loader-neutral common code.
         NeoForge.EVENT_BUS.addListener(ItemTooltipEvent.class, tooltip ->
                 SpellEngineClient.addTooltipLines(tooltip.getItemStack(), tooltip.getFlags(), tooltip.getToolTip()));
-        NeoForge.EVENT_BUS.addListener(RenderLevelStageEvent.class, render -> {
-            if (render.getStage() == RenderLevelStageEvent.Stage.AFTER_TRANSLUCENT_BLOCKS) {
-                BeamRenderer.renderAfterTranslucent(render.getPoseStack(), render.getCamera(), render.getPartialTick().getTickDelta(true));
-            }
+        // 26.2: no immediate-mode drawing any more (`MultiBufferSource` is gone); beams are submitted as custom
+        // geometry into the level's submit node collector (`SubmitCustomGeometryEvent`, inside `LevelRenderer#submitFeatures`).
+        NeoForge.EVENT_BUS.addListener(SubmitCustomGeometryEvent.class, submit -> {
+            var client = Minecraft.getInstance();
+            BeamRenderer.submit(submit.getPoseStack(), submit.getSubmitNodeCollector(), client.gameRenderer.mainCamera(),
+                    client.getDeltaTracker().getGameTimeDeltaPartialTick(true));
         });
         event.enqueueWork(SpellEngineClient::onClientStarted);
 
         ModLoadingContext.get().registerExtensionPoint(IConfigScreenFactory.class, () -> (modContainer, parent) -> new ConfigMenuScreen(parent));
     }
 
-    public static final Identifier SPELL_HUD_LAYER_ID = Identifier.of(SpellEngineMod.ID, "spell_hud");
     @SubscribeEvent
-    public static void registerGuiOverlaysEvent(RegisterGuiLayersEvent event) {
-        event.registerBelow(VanillaGuiLayers.CHAT, SPELL_HUD_LAYER_ID, (guiGraphics, deltaTracker) -> {
-            if (MinecraftClient.getInstance().options.hudHidden) { return; }
-            HudRenderHelper.render(guiGraphics, deltaTracker.getTickDelta(true));
-        });
+    public static void registerGuiLayers(RegisterGuiLayersEvent event) {
+        // Spell HUD above the boss overlay: the last layer of the main in-game HUD group (SLEEP_OVERLAY is next).
+        // AIR_LEVEL is too early — CONTEXTUAL_INFO_BAR_BACKGROUND (the experience bar) comes after it and covers
+        // the default cast bar, which sits on exactly the same rectangle. Fabric attaches after BOSS_BAR, the same
+        // spot. Modded layers carry no vanilla render condition, so HudRenderHelper checks `hideGui` itself.
+        event.registerAbove(VanillaGuiLayers.BOSS_OVERLAY, HudRenderHelper.HUD_ELEMENT_ID, (guiGraphics, deltaTracker) ->
+                HudRenderHelper.renderHudElement(guiGraphics, deltaTracker.getGameTimeDeltaPartialTick(true)));
     }
 
     @SubscribeEvent
     public static void registerKeys(RegisterKeyMappingsEvent event){
         for(var keybinding: Keybindings.all()) {
-            if (keybinding instanceof GuiKeyBinding) {
-                // NeoForge natively understands GUI scoped bindings, and its key lookup
-                // only activates them while a screen is open. (The controls screen still
-                // marks the key red, vanilla bindings conflict with every context.)
+            if (keybinding == Keybindings.tooltip_details) {
+                // GUI scoped binding (GuiKeyBinding was dropped in the 1.21.11 port, the vanilla
+                // KeyBinding.Category API replaced it). NeoForge only activates GUI-context keys
+                // while a screen is open, matching the previous behaviour.
                 keybinding.setKeyConflictContext(KeyConflictContext.GUI);
             }
             event.register(keybinding);
@@ -87,7 +87,7 @@ public class NeoForgeClientMod {
     public static void registerParticleProviders(RegisterParticleProvidersEvent event) {
         SpellEngineClient.registerParticleAppearances(new SpellEngineClient.ParticleAppearanceRegistrar() {
             @Override
-            public <T extends ParticleEffect> void register(ParticleType<T> type, SpellEngineClient.SpriteFactory<T> factory) {
+            public <T extends ParticleOptions> void register(ParticleType<T> type, SpellEngineClient.SpriteFactory<T> factory) {
                 event.registerSpriteSet(type, factory::create);
             }
         });
@@ -107,16 +107,8 @@ public class NeoForgeClientMod {
     }
 
     @SubscribeEvent
-    public static void registerAdditionalModels(ModelEvent.RegisterAdditional event) {
-        // WARNING! Models registered like this, need to be retrieved with `ModelIdentifier.standalone(id)` !!
-
-        // Register custom models from registry
-        for (var id: CustomModelRegistry.getModelIds()) {
-            var modelId = ModelIdentifier.standalone(id);
-            event.register(modelId);
-        }
-
-        // Register dynamically discovered spell models (scrolls, books, projectiles, effects)
-        NeoForgeModelDiscovery.registerCustomModels(event);
+    public static void registerStandaloneModels(ModelEvent.RegisterStandalone event) {
+        // 21.11: raw (non block/item) models are keyed standalone models, see NeoForgeModelDiscovery
+        NeoForgeModelDiscovery.register(event);
     }
 }

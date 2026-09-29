@@ -1,18 +1,22 @@
 package net.spell_engine.rpg_series.item;
 
-import net.minecraft.entity.attribute.EntityAttributeModifier.Operation;
-import net.minecraft.recipe.Ingredient;
-import net.minecraft.registry.entry.RegistryEntry;
-import net.minecraft.sound.SoundEvent;
-import net.minecraft.util.Identifier;
+import net.minecraft.core.Holder;
+import net.minecraft.resources.Identifier;
+import net.minecraft.sounds.SoundEvent;
+import net.minecraft.tags.TagKey;
+import net.minecraft.world.entity.ai.attributes.AttributeModifier.Operation;
+import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.item.Item;
 import net.spell_engine.rpg_series.config.AttributeModifier;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.List;
-import java.util.function.Supplier;
 
 /**
  * Centralized shield factory for creating standardized shields across RPG Series mods.
  * Provides tier-based durability calculation and attribute helper methods.
+ * Register the entries with {@code Shield.register(configs, entries, groupKey)} — the built-in
+ * vanilla-component factory needs no shield library.
  *
  * <p>Usage example:
  * <pre>{@code
@@ -21,16 +25,16 @@ import java.util.function.Supplier;
  *         "mymod",
  *         "iron_kite_shield",
  *         Equipment.Tier.TIER_1,
- *         () -> Ingredient.ofItems(Items.IRON_INGOT),
+ *         ItemTags.IRON_TOOL_MATERIALS,
  *         MyModSounds.shield_equip.entry()
  *     );
  * }</pre>
  */
 public class Shields {
 
-    // Attribute constants
-    private static final String GENERIC_ARMOR_TOUGHNESS = "minecraft:generic.armor_toughness";
-    private static final String GENERIC_MAX_HEALTH = "generic.max_health";
+    // Attribute ids derived from the registry entries (1.21.2 dropped the `generic.` prefix — never hardcode them)
+    private static final String ARMOR_TOUGHNESS = Attributes.ARMOR_TOUGHNESS.getRegisteredName();
+    private static final String MAX_HEALTH = Attributes.MAX_HEALTH.getRegisteredName();
 
     /**
      * Create a shield entry with tier-based durability and custom attributes.
@@ -38,7 +42,7 @@ public class Shields {
      * @param namespace        The mod namespace (e.g., "paladins")
      * @param name             The shield name (e.g., "iron_kite_shield")
      * @param tier             The shield tier (WOODEN through TIER_5, or GOLDEN)
-     * @param repairIngredient Supplier for the repair ingredient
+     * @param repairItems      Item tag accepted for anvil repair (`null` = not repairable)
      * @param attributes       List of attribute modifiers
      * @param equipSound       Sound played when equipping shield
      * @return Shield.Entry for method chaining
@@ -47,16 +51,16 @@ public class Shields {
             String namespace,
             String name,
             Equipment.Tier tier,
-            Supplier<Ingredient> repairIngredient,
+            @Nullable TagKey<Item> repairItems,
             List<AttributeModifier> attributes,
-            RegistryEntry<SoundEvent> equipSound
+            Holder<SoundEvent> equipSound
     ) {
-        var id = Identifier.of(namespace, name);
+        var id = Identifier.fromNamespaceAndPath(namespace, name);
         var entry = new Shield.Entry(
                 id,
                 tier,
                 attributes,
-                repairIngredient,
+                repairItems,
                 equipSound
         );
 
@@ -77,7 +81,7 @@ public class Shields {
      * @param namespace        The mod namespace
      * @param name             The shield name
      * @param tier             The shield tier
-     * @param repairIngredient Supplier for the repair ingredient
+     * @param repairItems      Item tag accepted for anvil repair (`null` = not repairable)
      * @param equipSound       Sound played when equipping shield
      * @return Shield.Entry for method chaining
      */
@@ -85,10 +89,10 @@ public class Shields {
             String namespace,
             String name,
             Equipment.Tier tier,
-            Supplier<Ingredient> repairIngredient,
-            RegistryEntry<SoundEvent> equipSound
+            @Nullable TagKey<Item> repairItems,
+            Holder<SoundEvent> equipSound
     ) {
-        return create(namespace, name, tier, repairIngredient,
+        return create(namespace, name, tier, repairItems,
                 standardAttributes(tier), equipSound);
     }
 
@@ -111,16 +115,16 @@ public class Shields {
         return switch (tier) {
             case WOODEN, TIER_0, GOLDEN -> List.of(); // No attributes
             case TIER_1, TIER_2 -> List.of(
-                    new AttributeModifier(GENERIC_ARMOR_TOUGHNESS, 1, Operation.ADD_VALUE),
-                    new AttributeModifier(GENERIC_MAX_HEALTH, 2.0f, Operation.ADD_VALUE)
+                    new AttributeModifier(ARMOR_TOUGHNESS, 1, Operation.ADD_VALUE),
+                    new AttributeModifier(MAX_HEALTH, 2.0f, Operation.ADD_VALUE)
             );
             case TIER_3 -> List.of(
-                    new AttributeModifier(GENERIC_ARMOR_TOUGHNESS, 1, Operation.ADD_VALUE),
-                    new AttributeModifier(GENERIC_MAX_HEALTH, 4.0f, Operation.ADD_VALUE)
+                    new AttributeModifier(ARMOR_TOUGHNESS, 1, Operation.ADD_VALUE),
+                    new AttributeModifier(MAX_HEALTH, 4.0f, Operation.ADD_VALUE)
             );
             case TIER_4, TIER_5 -> List.of(
-                    new AttributeModifier(GENERIC_ARMOR_TOUGHNESS, 1, Operation.ADD_VALUE),
-                    new AttributeModifier(GENERIC_MAX_HEALTH, 6.0f, Operation.ADD_VALUE)
+                    new AttributeModifier(ARMOR_TOUGHNESS, 1, Operation.ADD_VALUE),
+                    new AttributeModifier(MAX_HEALTH, 6.0f, Operation.ADD_VALUE)
             );
         };
     }
@@ -132,7 +136,7 @@ public class Shields {
      * @return AttributeModifier for armor toughness
      */
     public static AttributeModifier toughness(float value) {
-        return new AttributeModifier(GENERIC_ARMOR_TOUGHNESS, value, Operation.ADD_VALUE);
+        return new AttributeModifier(ARMOR_TOUGHNESS, value, Operation.ADD_VALUE);
     }
 
     /**
@@ -142,6 +146,6 @@ public class Shields {
      * @return AttributeModifier for max health
      */
     public static AttributeModifier health(float value) {
-        return new AttributeModifier(GENERIC_MAX_HEALTH, value, Operation.ADD_VALUE);
+        return new AttributeModifier(MAX_HEALTH, value, Operation.ADD_VALUE);
     }
 }

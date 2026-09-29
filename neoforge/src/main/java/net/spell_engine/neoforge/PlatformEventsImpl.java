@@ -1,24 +1,27 @@
 package net.spell_engine.neoforge;
 
-import net.minecraft.enchantment.Enchantment;
-import net.minecraft.item.ItemGroup;
-import net.minecraft.item.ItemStack;
-import net.minecraft.loot.LootPool;
-import net.minecraft.registry.RegistryKey;
-import net.minecraft.registry.RegistryWrapper;
-import net.minecraft.registry.entry.RegistryEntry;
+import net.minecraft.core.Holder;
+import net.minecraft.core.HolderGetter;
+import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.util.Identifier;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.CreativeModeTab;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.enchantment.Enchantment;
+import net.minecraft.world.level.storage.loot.LootPool;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.LootTableLoadEvent;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import net.neoforged.neoforge.event.OnDatapackSyncEvent;
 import net.neoforged.neoforge.event.entity.living.LivingIncomingDamageEvent;
+import net.neoforged.neoforge.event.entity.living.LivingShieldBlockEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.server.ServerStartedEvent;
 import net.neoforged.neoforge.event.server.ServerStartingEvent;
 import net.spell_engine.PlatformEvents;
+import net.spell_engine.api.event.CombatEvents;
 import net.spell_engine.api.util.TriState;
 
 import java.util.ArrayList;
@@ -45,17 +48,17 @@ public class PlatformEventsImpl {
         NeoForge.EVENT_BUS.addListener(OnDatapackSyncEvent.class, event -> callback.run());
     }
 
-    public static void onPlayerJoin(Consumer<ServerPlayerEntity> callback) {
+    public static void onPlayerJoin(Consumer<ServerPlayer> callback) {
         NeoForge.EVENT_BUS.addListener(PlayerEvent.PlayerLoggedInEvent.class, event -> {
-            if (event.getEntity() instanceof ServerPlayerEntity player) {
+            if (event.getEntity() instanceof ServerPlayer player) {
                 callback.accept(player);
             }
         });
     }
 
-    public static void onPlayerChangedWorld(Consumer<ServerPlayerEntity> callback) {
+    public static void onPlayerChangedWorld(Consumer<ServerPlayer> callback) {
         NeoForge.EVENT_BUS.addListener(PlayerEvent.PlayerChangedDimensionEvent.class, event -> {
-            if (event.getEntity() instanceof ServerPlayerEntity player) {
+            if (event.getEntity() instanceof ServerPlayer player) {
                 callback.accept(player);
             }
         });
@@ -65,6 +68,26 @@ public class PlatformEventsImpl {
         // Side-effect hook only; never cancels.
         NeoForge.EVENT_BUS.addListener(LivingIncomingDamageEvent.class, event ->
                 callback.accept(event.getEntity(), event.getSource(), event.getAmount()));
+    }
+
+    /// NeoForge counterpart of the Fabric-only shield-block wrap in `LivingEntityEvents` (NeoForge patches
+    /// `BlocksAttacksComponent.onShieldHit` with an extra argument, so the common mixin cannot match it).
+    /// Fires the same CombatEvents once NeoForge has confirmed the block.
+    public static void registerShieldBlockBridge() {
+        NeoForge.EVENT_BUS.addListener(LivingShieldBlockEvent.class, event -> {
+            if (!event.getBlocked()) { return; }
+            var entity = event.getEntity();
+            var source = event.getDamageSource();
+            var blockedAmount = event.getBlockedDamage();
+            if (CombatEvents.ENTITY_SHIELD_BLOCK.isListened()) {
+                var args = new CombatEvents.EntityShieldBlock.Args(entity, source, blockedAmount);
+                CombatEvents.ENTITY_SHIELD_BLOCK.invoke(listener -> listener.onShieldBlock(args));
+            }
+            if (entity instanceof Player player && CombatEvents.PLAYER_SHIELD_BLOCK.isListened()) {
+                var args = new CombatEvents.PlayerShieldBlock.Args(player, source, blockedAmount);
+                CombatEvents.PLAYER_SHIELD_BLOCK.invoke(listener -> listener.onShieldBlock(args));
+            }
+        });
     }
 
     public static void onCommandRegistration(PlatformEvents.CommandRegistration callback) {
@@ -88,13 +111,13 @@ public class PlatformEventsImpl {
     }
 
     // Item-group callbacks are collected here and replayed by NeoForgeMod's mod-bus handler.
-    private static final Map<RegistryKey<ItemGroup>, List<PlatformEvents.ItemGroupModifier>> itemGroupModifiers = new HashMap<>();
+    private static final Map<ResourceKey<CreativeModeTab>, List<PlatformEvents.ItemGroupModifier>> itemGroupModifiers = new HashMap<>();
 
-    public static void onItemGroupModify(RegistryKey<ItemGroup> group, PlatformEvents.ItemGroupModifier callback) {
+    public static void onItemGroupModify(ResourceKey<CreativeModeTab> group, PlatformEvents.ItemGroupModifier callback) {
         itemGroupModifiers.computeIfAbsent(group, key -> new ArrayList<>()).add(callback);
     }
 
-    public static void dispatchItemGroup(RegistryKey<ItemGroup> group, ItemGroup.Entries entries, ItemGroup.DisplayContext context) {
+    public static void dispatchItemGroup(ResourceKey<CreativeModeTab> group, CreativeModeTab.Output entries, CreativeModeTab.ItemDisplayParameters context) {
         var modifiers = itemGroupModifiers.get(group);
         if (modifiers != null) {
             for (var modifier : modifiers) {
@@ -112,7 +135,7 @@ public class PlatformEventsImpl {
     }
 
     /// Combined enchant decision for the mixin. DENY wins over ALLOW; both win over PASS.
-    public static TriState evaluateAllowEnchanting(RegistryEntry<Enchantment> enchantment, ItemStack stack) {
+    public static TriState evaluateAllowEnchanting(Holder<Enchantment> enchantment, ItemStack stack) {
         var result = TriState.PASS;
         for (var callback : enchantCallbacks) {
             switch (callback.allow(enchantment, stack)) {
@@ -125,18 +148,18 @@ public class PlatformEventsImpl {
     }
 
     private static final class NeoForgeLootContext implements PlatformEvents.LootTableModifyContext {
-        private final RegistryWrapper.WrapperLookup registries;
+        private final HolderGetter.Provider registries;
         private final Identifier tableId;
         private final List<LootPool> existingPools;
         private final List<LootPool> pools = new ArrayList<>();
 
-        private NeoForgeLootContext(RegistryWrapper.WrapperLookup registries, Identifier tableId, List<LootPool> existingPools) {
+        private NeoForgeLootContext(HolderGetter.Provider registries, Identifier tableId, List<LootPool> existingPools) {
             this.registries = registries;
             this.tableId = tableId;
             this.existingPools = existingPools;
         }
 
-        @Override public RegistryWrapper.WrapperLookup registries() { return registries; }
+        @Override public HolderGetter.Provider registries() { return registries; }
         @Override public Identifier tableId() { return tableId; }
         @Override public List<LootPool> existingPools() { return existingPools; }
         @Override public void addPool(LootPool pool) { pools.add(pool); }

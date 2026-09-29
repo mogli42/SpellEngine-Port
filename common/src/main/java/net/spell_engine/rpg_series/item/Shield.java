@@ -1,21 +1,30 @@
 package net.spell_engine.rpg_series.item;
 
 import net.spell_engine.PlatformEvents;
-import net.minecraft.component.ComponentChanges;
-import net.minecraft.entity.attribute.EntityAttribute;
-import net.minecraft.entity.attribute.EntityAttributeModifier;
-import net.minecraft.item.Item;
-import net.minecraft.item.ItemGroup;
-import net.minecraft.recipe.Ingredient;
-import net.minecraft.registry.Registries;
-import net.minecraft.registry.Registry;
-import net.minecraft.registry.RegistryKey;
-import net.minecraft.registry.entry.RegistryEntry;
-import net.minecraft.sound.SoundEvent;
-import net.minecraft.util.Identifier;
-import net.minecraft.util.Pair;
-import net.minecraft.util.Rarity;
+import net.minecraft.core.Holder;
+import net.minecraft.core.HolderLookup;
+import net.minecraft.core.component.DataComponentInitializers;
+import net.minecraft.core.Registry;
+import net.minecraft.core.component.DataComponentPatch;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.sounds.SoundEvent;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.tags.DamageTypeTags;
+import net.minecraft.tags.TagKey;
 import net.minecraft.util.Util;
+import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.EquipmentSlotGroup;
+import net.minecraft.world.entity.ai.attributes.Attribute;
+import net.minecraft.world.item.CreativeModeTab;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.Rarity;
+import net.minecraft.world.item.component.BlocksAttacks;
+import net.minecraft.world.item.component.ItemAttributeModifiers;
+import net.minecraft.world.item.equipment.Equippable;
 import net.spell_engine.rpg_series.config.AttributeModifier;
 import net.spell_engine.rpg_series.config.ShieldConfig;
 import net.spell_engine.api.spell.SpellDataComponents;
@@ -26,37 +35,109 @@ import org.jetbrains.annotations.Nullable;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Supplier;
+import java.util.Optional;
 
-/**
- * Shield API providing entry class and registration system.
- * Remains independent from fabric-extras shield library.
- */
+/// Shield entries + registration. Shields are built purely from vanilla data components (no library, no
+/// `Item` subclass) — see {@link #createVanilla} / {@link #DEFAULT_FACTORY}:
+///
+/// - **blocking** — `minecraft:blocks_attacks` ({@link #VANILLA_SHIELD_BLOCKING}, the values of `Items.SHIELD`)
+/// - **off-hand slot + equip sound** — `minecraft:equippable` (unswappable, like the vanilla shield)
+/// - **break sound** — `minecraft:break_sound`
+/// - **durability** — `minecraft:max_damage` (from {@link Entry#durability()})
+/// - **repair** — `minecraft:repairable` (an item tag; see {@link Entry#repairItems()}), applied only when the entry declares one
+/// - **attributes** — `minecraft:attribute_modifiers` (`HAND` slot), from the shield config
+///   (configs are loaded before item registration, so no post-construction mutation is needed)
+///
+/// All of these are `Item.Properties` component steps: since 26.1 they are bound to the item at resource
+/// reload (`DataComponentInitializers`), so `item.components()` is empty until the first reload.
+/// - **blocking model** — consumer asset `assets/<ns>/items/<shield>.json`, a `minecraft:condition` on
+///   `minecraft:using_item` (the 1.21.4 replacement for the removed `blocking` model predicate)
 public class Shield {
 
-    /**
-     * Generic shield factory interface that doesn't depend on fabric-extras.
-     * Implementations will provide the actual shield item creation logic (e.g., CustomShieldItem::new).
-     */
+    /// One attribute modifier of a shield (`minecraft:attribute_modifiers`, `HAND` slot). 26.2 removed
+    /// `net.minecraft.util.Tuple`, which used to carry these pairs through {@link ShieldFactory}.
+    public record AttributeEntry(Holder<Attribute> attribute, net.minecraft.world.entity.ai.attributes.AttributeModifier modifier) { }
+
+    /// Produces the shield `Item` from the assembled settings. The default is {@link #DEFAULT_FACTORY}
+    /// ({@link #createVanilla}); override only for a custom `Item` subclass. `settings` already carries
+    /// durability, rarity, fireproof, spell components and the `minecraft:repairable` component when the
+    /// factory is called.
     public interface ShieldFactory {
         Item create(
-                RegistryEntry<SoundEvent> equipSound,
-                Supplier<Ingredient> repairIngredient,
-                List<Pair<RegistryEntry<EntityAttribute>, EntityAttributeModifier>> attributes,
-                Item.Settings settings
+                @Nullable Holder<SoundEvent> equipSound,
+                List<AttributeEntry> attributes,
+                Item.Properties settings
         );
     }
 
-    /**
-     * Shield entry class that stores shield configuration and handles item creation.
-     * Does NOT store the factory to remain independent from fabric-extras.
-     */
+    /// Vanilla shield blocking: 0.25 s delay, 90 degree cone, full reduction,
+    /// 3+ damage consumes durability, axes disable it, vanilla block/break sounds.
+    ///
+    /// Since 26.1 `BlocksAttacks#bypassedBy` is a `HolderSet<DamageType>` resolved from the reload context
+    /// (`#minecraft:bypasses_shield`), so this is a delayed component initializer rather than a constant —
+    /// exactly how `Items.SHIELD` is built. Use {@link #vanillaShieldBlocking} for a resolved value.
+    public static final DataComponentInitializers.SingleComponentInitializer<BlocksAttacks> VANILLA_SHIELD_BLOCKING = context -> new BlocksAttacks(
+            0.25F,
+            1.0F,
+            List.of(new BlocksAttacks.DamageReduction(90.0F, Optional.empty(), 0.0F, 1.0F)),
+            new BlocksAttacks.ItemDamageFunction(3.0F, 1.0F, 1.0F),
+            Optional.of(context.getOrThrow(DamageTypeTags.BYPASSES_SHIELD)),
+            Optional.of(SoundEvents.SHIELD_BLOCK),
+            Optional.of(SoundEvents.SHIELD_BREAK)
+    );
+
+    /// {@link #VANILLA_SHIELD_BLOCKING} resolved against `registries` (e.g. `level.registryAccess()`).
+    public static BlocksAttacks vanillaShieldBlocking(HolderLookup.Provider registries) {
+        return VANILLA_SHIELD_BLOCKING.create(registries);
+    }
+
+    /// The built-in {@link ShieldFactory}: a plain `Item` assembled from vanilla components.
+    public static final ShieldFactory DEFAULT_FACTORY = Shield::createVanilla;
+
+    /// {@link ShieldFactory} implementation producing a plain `new Item(settings)` with the vanilla shield
+    /// components applied. Durability and repair are expected to be on `settings` already (see {@link Entry#create}).
+    public static Item createVanilla(
+            @Nullable Holder<SoundEvent> equipSound,
+            List<AttributeEntry> attributes,
+            Item.Properties settings
+    ) {
+        return new Item(applyVanillaComponents(settings, equipSound, attributes));
+    }
+
+    /// Applies `blocks_attacks`, `equippable` (offhand, unswappable, equip sound), `break_sound` and
+    /// `attribute_modifiers` (`HAND` slot) to `settings`. Useful for custom factories that want the vanilla
+    /// shield behaviour on their own `Item` subclass.
+    public static Item.Properties applyVanillaComponents(
+            Item.Properties settings,
+            @Nullable Holder<SoundEvent> equipSound,
+            List<AttributeEntry> attributes
+    ) {
+        var equippable = Equippable.builder(EquipmentSlot.OFFHAND).setSwappable(false);
+        if (equipSound != null) {
+            equippable.setEquipSound(equipSound);
+        }
+        return settings.delayedComponent(DataComponents.BLOCKS_ATTACKS, VANILLA_SHIELD_BLOCKING)
+                .component(DataComponents.EQUIPPABLE, equippable.build())
+                .component(DataComponents.BREAK_SOUND, SoundEvents.SHIELD_BREAK)
+                .attributes(handAttributes(attributes));
+    }
+
+    public static ItemAttributeModifiers handAttributes(
+            List<AttributeEntry> attributes) {
+        var builder = ItemAttributeModifiers.builder();
+        for (var pair : attributes) {
+            builder.add(pair.attribute(), pair.modifier(), EquipmentSlotGroup.HAND);
+        }
+        return builder.build();
+    }
+
+    /// Shield entry: id, tier, default attributes, repair item tag, equip sound, loot/spell metadata.
     public static final class Entry {
         private final Identifier id;
         private final Equipment.Tier tier;
         private final List<AttributeModifier> defaults;
-        private final Supplier<Ingredient> repairIngredientSupplier;
-        private final RegistryEntry<SoundEvent> equipSound;
+        private final @Nullable TagKey<Item> repairItems;
+        private final Holder<SoundEvent> equipSound;
 
         private String translatedName = "";
         public Rarity rarity = Rarity.COMMON;
@@ -72,14 +153,14 @@ public class Shield {
                 Identifier id,
                 Equipment.Tier tier,
                 List<AttributeModifier> defaults,
-                Supplier<Ingredient> repairIngredientSupplier,
-                RegistryEntry<SoundEvent> equipSound
+                @Nullable TagKey<Item> repairItems,
+                Holder<SoundEvent> equipSound
         ) {
             this.id = id;
             this.tier = tier;
             this.lootProperties = Equipment.LootProperties.of(tier.getNumber());
             this.defaults = defaults;
-            this.repairIngredientSupplier = repairIngredientSupplier;
+            this.repairItems = repairItems;
             this.equipSound = equipSound;
         }
 
@@ -102,11 +183,12 @@ public class Shield {
             return defaults;
         }
 
-        public Supplier<Ingredient> repairIngredientSupplier() {
-            return repairIngredientSupplier;
+        /// Item tag accepted for anvil repair; `null` means the shield is not repairable.
+        public @Nullable TagKey<Item> repairItems() {
+            return repairItems;
         }
 
-        public RegistryEntry<SoundEvent> equipSound() {
+        public Holder<SoundEvent> equipSound() {
             return equipSound;
         }
 
@@ -134,31 +216,38 @@ public class Shield {
             };
         }
 
-        /**
-         * Create the shield item using the provided factory.
-         * Factory is passed as a parameter to keep this class independent from fabric-extras.
-         *
-         * @param settings  Item settings with durability, fireproof, rarity, etc.
-         * @param attributes Attribute modifiers to apply
-         * @param factory   Shield factory (e.g., CustomShieldItem::new)
-         * @return Created shield item
-         */
+        /// Creates the shield item with the built-in vanilla-component factory.
+        public Item create(Item.Properties settings, List<AttributeModifier> attributes) {
+            return create(settings, attributes, DEFAULT_FACTORY);
+        }
+
+        /// Creates the shield item using `factory`. Durability and repair (`minecraft:repairable`) are applied to
+        /// `settings` here, before the factory runs, so every factory gets them. `repairable(TagKey)` requires an
+        /// unfrozen ITEM registry — always true while items are registered at mod init.
+        ///
+        /// @param settings   Item settings with fireproof, rarity, spell components etc.
+        /// @param attributes Attribute modifiers to apply (attribute ids as registry ids, e.g. `minecraft:armor_toughness`)
+        /// @param factory    Shield factory ({@link #DEFAULT_FACTORY} or a custom one)
         public Item create(
-                Item.Settings settings,
+                Item.Properties settings,
                 List<AttributeModifier> attributes,
                 ShieldFactory factory
         ) {
             // Convert AttributeModifier list to format expected by shield factory
-            ArrayList<Pair<RegistryEntry<EntityAttribute>, EntityAttributeModifier>> shieldAttributes = new ArrayList<>();
+            ArrayList<AttributeEntry> shieldAttributes = new ArrayList<>();
             for (var modifier : Weapon.attributesFrom(attributes).modifiers()) {
-                shieldAttributes.add(new Pair<>(modifier.attribute(), modifier.modifier()));
+                shieldAttributes.add(new AttributeEntry(modifier.attribute(), modifier.modifier()));
+            }
+
+            settings.durability(durability());
+            if (repairItems != null) {
+                settings.repairable(repairItems);
             }
 
             this.registeredItem = factory.create(
                     equipSound,
-                    repairIngredientSupplier,
                     shieldAttributes,
-                    settings.maxDamage(durability())
+                    settings
             );
             return this.registeredItem;
         }
@@ -175,7 +264,7 @@ public class Shield {
         }
 
         public String translationKey() {
-            return Util.createTranslationKey("item", id());
+            return Util.makeDescriptionId("item", id());
         }
 
         public Entry rarity(Rarity rarity) {
@@ -194,18 +283,18 @@ public class Shield {
         }
 
         public Entry withSpellChoices(String pool) {
-            this.spellContainer = this.spellContainer.withBindingPool(Identifier.of(pool));
+            this.spellContainer = this.spellContainer.withBindingPool(Identifier.parse(pool));
             this.spellChoice = SpellChoice.of(pool);
             return this;
         }
 
         /// Registers component changes to apply to this item when `spellId` is chosen from the pool.
         /// Lets the chosen spell drive the item's appearance (`custom_model_data`, `custom_name`, ...).
-        public Entry applyOnChoice(String spellId, ComponentChanges changes) {
+        public Entry applyOnChoice(String spellId, DataComponentPatch changes) {
             if (this.spellChoice == null) {
                 this.spellChoice = SpellChoice.EMPTY;
             }
-            this.spellChoice = this.spellChoice.withApplyOnChoice(Identifier.of(spellId), changes);
+            this.spellChoice = this.spellChoice.withApplyOnChoice(Identifier.parse(spellId), changes);
             return this;
         }
 
@@ -220,19 +309,25 @@ public class Shield {
         }
     }
 
-    /**
-     * Register shield entries with the provided factory.
-     * Factory is passed as a parameter to keep this method independent from fabric-extras.
-     *
-     * @param configs       Shield configuration map
-     * @param entries       List of shield entries to register
-     * @param itemGroupKey  Item group to add shields to
-     * @param factory       Shield factory (e.g., CustomShieldItem::new)
-     */
+    /// Registers shield entries with the built-in vanilla-component factory ({@link #DEFAULT_FACTORY}).
     public static void register(
             Map<String, ShieldConfig> configs,
             List<Entry> entries,
-            RegistryKey<ItemGroup> itemGroupKey,
+            ResourceKey<CreativeModeTab> itemGroupKey
+    ) {
+        register(configs, entries, itemGroupKey, DEFAULT_FACTORY);
+    }
+
+    /// Registers shield entries with a custom factory.
+    ///
+    /// @param configs       Shield configuration map (loaded before this call; missing entries are filled from defaults)
+    /// @param entries       List of shield entries to register
+    /// @param itemGroupKey  Item group to add shields to
+    /// @param factory       Shield factory ({@link #DEFAULT_FACTORY} or a custom `Item` subclass factory)
+    public static void register(
+            Map<String, ShieldConfig> configs,
+            List<Entry> entries,
+            ResourceKey<CreativeModeTab> itemGroupKey,
             ShieldFactory factory
     ) {
         ArrayList<Item> shields = new ArrayList<>();
@@ -248,9 +343,9 @@ public class Shield {
             }
 
             // Create item settings
-            var settings = new Item.Settings();
+            var settings = new Item.Properties().setId(ResourceKey.create(Registries.ITEM, entry.id()));
             if (entry.tier().getNumber() >= Equipment.Tier.TIER_3.getNumber()) {
-                settings.fireproof();
+                settings.fireResistant();
             }
             if (entry.rarity != Rarity.COMMON) {
                 settings.rarity(entry.rarity);
@@ -264,9 +359,9 @@ public class Shield {
                 settings.component(SpellDataComponents.SPELL_CONTAINER, entry.spellContainer);
             }
 
-            // Create and register item - factory passed here
-            var shield = entry.create(settings, config.attributes, factory);
-            Registry.register(Registries.ITEM, entry.id, shield);
+            // Create and register item
+            var shield = entry.create(settings, config.selectedAttributes(), factory);
+            Registry.register(BuiltInRegistries.ITEM, entry.id, shield);
             entry.registeredItem = shield;
             shields.add(shield);
         }
@@ -274,7 +369,7 @@ public class Shield {
         // Add to item group
         PlatformEvents.onItemGroupModify(itemGroupKey, (content, context) -> {
             for (var shield : shields) {
-                content.add(shield);
+                content.accept(shield);
             }
         });
     }

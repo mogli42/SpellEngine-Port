@@ -1,6 +1,7 @@
 package net.spell_engine.rpg_series;
 
-import net.minecraft.enchantment.Enchantments;
+import com.google.common.base.Suppliers;
+import net.minecraft.world.item.enchantment.Enchantments;
 import net.spell_engine.PlatformEvents;
 import net.spell_engine.api.item.weapon.StaffItem;
 import net.spell_engine.api.util.TriState;
@@ -67,7 +68,7 @@ public class RPGSeriesCore {
 
         var staffEnchantments = Set.of(Enchantments.KNOCKBACK, Enchantments.FIRE_ASPECT, Enchantments.LOOTING);
         PlatformEvents.onAllowEnchanting((enchantment, target) -> {
-            if (target.getItem() instanceof StaffItem && staffEnchantments.contains(enchantment.getKey().get())) {
+            if (target.getItem() instanceof StaffItem && staffEnchantments.contains(enchantment.unwrapKey().get())) {
                 return TriState.ALLOW;
             }
             return TriState.PASS;

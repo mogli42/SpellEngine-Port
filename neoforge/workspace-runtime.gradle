@@ -4,18 +4,14 @@
 //   rpg_series_gear         Arsenal, Armory
 //   rpg_series_accessories  Jewelry, Relics
 //   rpg_series_skills       SkillTree (+ Pufferfish Skills)
-// Shared libraries the groups depend on (ArmorModelAPI, Runes, StructurePoolAPI, BundleAPI, Critical Strike)
-// load with any group. CI and other developers never evaluate this file.
+// Shared libraries the groups depend on (ArmorModelAPI, Runes, StructurePoolAPI, BundleAPI) load with any group.
+// CI and other developers never evaluate this file.
 //
-// The named `dev-shadow` jars go on the runtime classpath: production jars dropped into run/mods are
-// runtime-remapped by the loader, which cannot resolve overrides inherited through *named* SpellEngine
-// classes (e.g. `LevitateStatusEffect extends CustomStatusEffect`), so those overrides silently stop
-// overriding. See memory `run-content-mod-in-se-workspace`.
+// 26.1+: the game is unobfuscated, the published platform jar is the shaded main artifact (no `dev-shadow`
+// classifier any more) and goes straight on the runtime classpath. See LESSONS_1.21.11_TO_26.1 §1.
 //
-// Every pinned version must exist in ~/.m2 as a `dev-shadow` artifact: `./gradlew publishToMavenLocal`
-// from that mod's 1.21.1 branch. After publishing, bump the pin here (and in the other loader's copy).
-// NOTE: NeoForge variant mirrors the Fabric list; not runtime-verified on this branch.
-
+// After publishing a content mod to mavenLocal, bump its pin here (and in the other loader's copy).
+// NOTE: NeoForge variant mirrors the Fabric list; server boot verified 2026-08-26, client not yet.
 def flags = rootProject.ext.rpgSeriesWorkspace
 
 repositories {
@@ -27,29 +23,28 @@ repositories {
 
 dependencies {
     // Shared libraries
-    localRuntime("net.rpg_foundation:armor_model_api-neoforge:1.0.0+1.21.1:dev-shadow") { transitive = false }
-    localRuntime("net.rpg_series:runes-neoforge:1.3.1+1.21.1:dev-shadow") { transitive = false }
-    localRuntime("net.foundation:structure_pool_api-neoforge:1.2.0+1.21.1:dev-shadow") { transitive = false }
-    localRuntime("com.github.TheRedBrain:bundle-api-neoforge:1.1.0:dev-shadow") { transitive = false }
-    localRuntime("net.critical_strike:critical_strike-neoforge:1.0.1+1.21.1:dev-shadow") { transitive = false }
-    modLocalRuntime("maven.modrinth:shield-api:2.1.0-neoforge") // JiJ'd by Paladins/Arsenal on 1.21.1, absent with transitive = false
+    localRuntime("net.rpg_foundation:armor_model_api-neoforge:1.1.0.001+26.2") { transitive = false }
+    localRuntime("net.rpg_series:runes-neoforge:1.3.2.001+26.2") { transitive = false }
+    localRuntime("net.rpg_foundation:structure_pool_api-neoforge:1.3.0.001+26.2") { transitive = false }
+    localRuntime("maven.modrinth:bundle-api:4.0.0+26.2-neoforge") { transitive = false }
+    localRuntime("net.critical_strike:critical_strike-neoforge:1.0.5.007+26.2") { transitive = false } // used by SkillTree/Jewelry configs (critical_strike:chance)
 
     if (flags.rpg_series_classes) {
-    localRuntime("net.rpg_series:archers-neoforge:3.1.1+1.21.1:dev-shadow") { transitive = false }
-    localRuntime("net.rpg_series:wizards-neoforge:3.1.1+1.21.1:dev-shadow") { transitive = false }
-    localRuntime("net.rpg_series:paladins-neoforge:3.1.1+1.21.1:dev-shadow") { transitive = false }
-    localRuntime("net.rpg_series:rogues-neoforge:3.1.1+1.21.1:dev-shadow") { transitive = false }
+    localRuntime("net.rpg_series:archers-neoforge:3.1.2.009+26.2") { transitive = false }
+    localRuntime("net.rpg_series:wizards-neoforge:3.1.2.011+26.2") { transitive = false }
+    localRuntime("net.rpg_series:paladins-neoforge:3.1.2.010+26.2") { transitive = false }
+    localRuntime("net.rpg_series:rogues-neoforge:3.1.2.008+26.2") { transitive = false }
     }
     if (flags.rpg_series_gear) {
-    localRuntime("net.arsenal:arsenal-neoforge:1.5.0+1.21.1:dev-shadow") { transitive = false }
-    localRuntime("net.rpg_series:armory-neoforge:1.5.1+1.21.1:dev-shadow") { transitive = false }
+    localRuntime("net.arsenal:arsenal-neoforge:1.5.1.007+26.2") { transitive = false }
+    localRuntime("net.rpg_series:armory-neoforge:1.5.2.009+26.2") { transitive = false }
     }
     if (flags.rpg_series_accessories) {
-    localRuntime("net.rpg_series:jewelry-neoforge:2.4.0+1.21.1:dev-shadow") { transitive = false }
-    localRuntime("net.rpg_series:relics-neoforge:1.4.0+1.21.1:dev-shadow") { transitive = false }
+    localRuntime("net.rpg_series:jewelry-neoforge:2.4.1.009+26.2") { transitive = false }
+    localRuntime("net.rpg_series:relics-neoforge:1.4.1.008+26.2") { transitive = false }
     }
     if (flags.rpg_series_skills) {
-    localRuntime("net.rpg_series:skill_tree-neoforge:1.6.0+1.21.1:dev-shadow") { transitive = false }
-        modLocalRuntime("net.puffish:skillsmod:0.16.7+1.21:neoforge") // real mod jar, remapped by Loom
+    localRuntime("net.rpg_series:skill_tree-neoforge:1.6.1.007+26.2") { transitive = false }
+        localRuntime("net.puffish:skillsmod:0.18.3+26.2:neoforge")
     }
 }

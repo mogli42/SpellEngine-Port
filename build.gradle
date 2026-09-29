@@ -1,12 +1,19 @@
 plugins {
-    id 'dev.architectury.loom' version '1.11-SNAPSHOT' apply false
-    id 'architectury-plugin' version '3.4-SNAPSHOT'
-    id 'com.gradleup.shadow' version '8.3.6' apply false
+    // This version of Minecraft is not obfuscated, so Loom is set up without remapping.
+    id 'dev.architectury.loom-no-remap' version '1.17-SNAPSHOT' apply false
+    id 'architectury-plugin' version '3.5-SNAPSHOT'
+    id 'com.gradleup.shadow' version '9.4.3' apply false
 }
 
 architectury {
     minecraft = project.minecraft_version
 }
+
+// Supported game versions (gradle.properties `minecraft_compat_versions`, colon separated, oldest first):
+// the first entry is the manifest minimum, the whole list becomes the CurseForge/Modrinth version tags.
+ext.minecraftCompatVersions = project.minecraft_compat_versions.split(':').collect { it.trim() }.findAll { it }
+ext.minecraft_min_version = minecraftCompatVersions.first()
+
 
 // RPG Series dev workspace flags (see fabric/workspace-runtime.gradle). Each flag loads one group of
 // content mods into the dev runtime. Sources, in priority order: `-P<flag>=<bool>` on the command
@@ -31,7 +38,7 @@ allprojects {
 }
 
 subprojects {
-    apply plugin: 'dev.architectury.loom'
+    apply plugin: 'dev.architectury.loom-no-remap'
     apply plugin: 'architectury-plugin'
     apply plugin: 'maven-publish'
 
@@ -51,16 +58,12 @@ subprojects {
 
     dependencies {
         minecraft "net.minecraft:minecraft:$rootProject.minecraft_version"
-        mappings loom.layered {
-            it.mappings("net.fabricmc:yarn:$rootProject.yarn_mappings:v2")
-            it.mappings("dev.architectury:yarn-mappings-patch-neoforge:$rootProject.yarn_mappings_patch_neoforge_version")
-        }
     }
 
     java {
         // The JDK this compiles on. Without it, javac runs on whatever JVM launched Gradle.
         toolchain {
-            languageVersion = JavaLanguageVersion.of(21)
+            languageVersion = JavaLanguageVersion.of(25)
         }
 
         // Loom will automatically attach sourcesJar to a RemapSourcesJar task and to the "build" task
@@ -68,12 +71,12 @@ subprojects {
         // If you remove this line, sources will not be generated.
         withSourcesJar()
 
-        sourceCompatibility = JavaVersion.VERSION_21
-        targetCompatibility = JavaVersion.VERSION_21
+        sourceCompatibility = JavaVersion.VERSION_25
+        targetCompatibility = JavaVersion.VERSION_25
     }
 
     tasks.withType(JavaCompile).configureEach {
-        it.options.release = 21
+        it.options.release = 25
     }
 
     // Configure Maven publishing.

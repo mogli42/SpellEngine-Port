@@ -2,17 +2,19 @@ package net.spell_engine.fabric.client;
 
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
+import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
+import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
+import net.spell_engine.client.gui.HudRenderHelper;
 import net.fabricmc.fabric.api.client.item.v1.ItemTooltipCallback;
-import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
-import net.fabricmc.fabric.api.client.model.loading.v1.ModelLoadingPlugin;
-import net.fabricmc.fabric.api.client.particle.v1.ParticleFactoryRegistry;
+import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
+import net.fabricmc.fabric.api.client.particle.v1.ParticleProviderRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry;
-import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
-import net.minecraft.client.gui.screen.ingame.HandledScreens;
+import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.MenuScreens;
 import net.spell_engine.client.SpellEngineClient;
 import net.spell_engine.client.input.Keybindings;
 import net.spell_engine.client.render.BeamRenderer;
-import net.spell_engine.client.render.CustomModelRegistry;
 import net.spell_engine.client.render.SpellCloudRenderer;
 import net.spell_engine.client.render.SpellModelEffectRenderer;
 import net.spell_engine.client.render.SpellProjectileRenderer;
@@ -31,37 +33,42 @@ public final class FabricClientMod implements ClientModInitializer {
         FabricClientNetwork.init();
 
         // Loader-specific registrations, delegating to the loader-neutral SpellEngineClient logic.
-        HandledScreens.register(SpellBindingScreenHandler.HANDLER_TYPE, SpellBindingScreen::new);
-        HandledScreens.register(SpellChoiceScreenHandler.HANDLER_TYPE, SpellChoiceScreen::new);
+        MenuScreens.register(SpellBindingScreenHandler.HANDLER_TYPE, SpellBindingScreen::new);
+        MenuScreens.register(SpellChoiceScreenHandler.HANDLER_TYPE, SpellChoiceScreen::new);
         EntityRendererRegistry.register(SpellProjectile.ENTITY_TYPE, SpellProjectileRenderer::new);
         EntityRendererRegistry.register(SpellCloud.ENTITY_TYPE, SpellCloudRenderer::new);
         EntityRendererRegistry.register(SpellModelEffect.ENTITY_TYPE, SpellModelEffectRenderer::new);
         SpellEngineClient.registerParticleAppearances(new SpellEngineClient.ParticleAppearanceRegistrar() {
             @Override
-            public <T extends net.minecraft.particle.ParticleEffect> void register(net.minecraft.particle.ParticleType<T> type, SpellEngineClient.SpriteFactory<T> factory) {
-                ParticleFactoryRegistry.getInstance().register(type, factory::create);
+            public <T extends net.minecraft.core.particles.ParticleOptions> void register(net.minecraft.core.particles.ParticleType<T> type, SpellEngineClient.SpriteFactory<T> factory) {
+                ParticleProviderRegistry.getInstance().register(type, factory::create);
             }
         });
         ClientLifecycleEvents.CLIENT_STARTED.register(client -> SpellEngineClient.onClientStarted());
+        // Spell HUD (hotbar, cast bar, error messages) as its own HUD element, attached after the boss bar:
+        // the last element of the main in-game HUD group (`Gui#extractRenderState` draws the sleep overlay next).
+        // Anything earlier is overdrawn — within a stratum `GuiRenderState#findAppropriateNode` layers by
+        // submission order, and the default cast bar sits on exactly the experience bar's rectangle, which
+        // `extractHotbarAndDecorations` emits *after* the mount health / air level elements. NeoForge registers
+        // above BOSS_OVERLAY, the same spot. Inherits the boss bar's `hideGui` render condition.
+        HudElementRegistry.attachElementAfter(VanillaHudElements.BOSS_BAR, HudRenderHelper.HUD_ELEMENT_ID, (context, tickCounter) ->
+                HudRenderHelper.renderHudElement(context, tickCounter.getGameTimeDeltaPartialTick(true)));
         ItemTooltipCallback.EVENT.register((stack, tooltipContext, tooltipType, lines) ->
                 SpellEngineClient.addTooltipLines(stack, tooltipType, lines));
-        WorldRenderEvents.AFTER_TRANSLUCENT.register(context ->
-                BeamRenderer.renderAfterTranslucent(context.matrixStack(), context.camera(), context.tickCounter().getTickDelta(true)));
+        // 26.2: no immediate-mode drawing any more (`MultiBufferSource` is gone); beams are submitted as custom
+        // geometry into the level's submit node collector in COLLECT_SUBMITS (inside `LevelRenderer#submitFeatures`).
+        LevelRenderEvents.COLLECT_SUBMITS.register(context ->
+                BeamRenderer.submit(context.poseStack(), context.submitNodeCollector(), context.gameRenderer().mainCamera(),
+                        Minecraft.getInstance().getDeltaTracker().getGameTimeDeltaPartialTick(true)));
 
         registerKeyBindings();
-        registerModels();
-        ModelLoadingPlugin.register(new FabricModelDiscovery());
+        FabricModelDiscovery.install();
     }
 
     private static void registerKeyBindings() {
         for (var keybinding: Keybindings.all()) {
-            KeyBindingHelper.registerKeyBinding(keybinding);
+            KeyMappingHelper.registerKeyMapping(keybinding);
         }
     }
 
-    private static void registerModels() {
-        ModelLoadingPlugin.register(pluginCtx -> {
-            pluginCtx.addModels(CustomModelRegistry.getModelIds());
-        });
-    }
 }

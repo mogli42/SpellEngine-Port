@@ -1,85 +1,74 @@
 package net.spell_engine.client.render;
 
-import net.minecraft.client.render.LightmapTextureManager;
-import net.minecraft.client.render.VertexConsumer;
-import net.minecraft.client.render.VertexConsumerProvider;
-import net.minecraft.client.render.VertexConsumers;
-import net.minecraft.entity.LivingEntity;
-import net.minecraft.item.ItemStack;
-import net.spell_engine.api.effect.GlowingItemStatusEffect;
+import com.mojang.blaze3d.vertex.QuadInstance;
+import net.minecraft.client.renderer.SubmitNodeCollector;
+import net.minecraft.client.resources.model.geometry.BakedQuad;
+import net.minecraft.util.LightCoordsUtil;
 import net.spell_engine.api.render.CustomLayers;
 import net.spell_engine.client.compatibility.ShaderCompatibility;
 import net.spell_engine.client.util.Color;
 import net.spell_engine.client.util.ItemGlowVertexConsumer;
-import org.jetbrains.annotations.Nullable;
+import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.blaze3d.vertex.VertexConsumer;
+import java.util.List;
 
 /**
- * The glow of the item currently being drawn, resolved once at the top of `ItemRenderer.renderItem`
- * and held for the length of that call.
- * <p>
- * The pieces that need it are scattered: the light the item is drawn at is a local of one overload,
- * and the vertex consumer is built by static factories that receive neither the item nor its holder.
- * Held here, all of them can reach it.
- * <p>
- * Rendering happens on a single thread and the calls are strictly nested within one `renderItem`,
- * so a single slot suffices - the same reasoning the holder field used before it moved here.
+ * Item glow on the 1.21.9+ deferred item render path: the glow color is resolved when the item render
+ * state is updated for its holder (`ItemModelResolver.updateForTopItem`, see `ItemModelManagerMixin`)
+ * and parked on the render state (`ItemRenderStateMixin`); when a layer of the state is submitted, its
+ * quads are submitted a second time on the glow layer, right after the item's own `submitItem`
+ * (`LayerRenderStateMixin`), so the `EQUAL` depth test of the glow finds the item's depth. Since 26.2 the
+ * feature-render phases guarantee that order: a solid item goes to the `solid` phase, and the blending glow
+ * layers submitted through `submitCustomGeometry` land in `translucentCustomGeometry`, which every
+ * `FeatureRenderDispatcher` executes after `solid` (the 26.1 `ImmediateItemGlowMixin` buffer trick is gone).
+ * Translucent item layers (`translucentBlocksAndItems`, executed later) do not get the glow. Under Iris the
+ * pipeline is declared as an emissive-entity program instead.
  */
 public final class ItemGlowRendering {
     private ItemGlowRendering() { }
 
-    @Nullable
-    private static Color current;
-
-    /// Resolves the glow the holder casts onto the item about to be drawn. A `null` holder is an item
-    /// with nobody behind it - one in the GUI, dropped on the ground, or hung in an item frame - and
-    /// nothing glows those.
-    public static void begin(@Nullable LivingEntity holder, ItemStack stack) {
-        current = holder != null ? GlowingItemStatusEffect.resolve(holder, stack) : null;
-    }
-
-    /// Cleared so an item never leaks its glow onto the next one drawn.
-    public static void end() {
-        current = null;
-    }
-
     /// Lit up from within, scaled by opacity, so a faint glow warms the item rather than flipping it
     /// to full bright all at once. Sky light is left alone, it is not ours to raise.
-    public static int light(int light) {
-        var glow = current;
-        if (glow == null) {
-            return light;
-        }
-        return LightmapTextureManager.pack(
-                Math.max(LightmapTextureManager.getBlockLightCoordinates(light), Math.round(15 * glow.alpha())),
-                LightmapTextureManager.getSkyLightCoordinates(light));
+    public static int light(Color glow, int light) {
+        return LightCoordsUtil.pack(
+                Math.max(LightCoordsUtil.block(light), Math.round(15 * glow.alpha())),
+                LightCoordsUtil.sky(light));
     }
 
-    /// The item's own consumer with the glow layers alongside it, the way the vanilla glint rides along.
-    /// Returned unchanged when nothing glows.
-    public static VertexConsumer glowing(VertexConsumerProvider vertexConsumers, VertexConsumer vertices) {
-        var glow = current;
-        if (glow == null) {
-            return vertices;
+    /// Submits the glow passes for one item layer. `matrices` must already carry the layer's display
+    /// transform (it does at the `submitItem` call site of `LayerRenderState.submit`).
+    public static void submitGlow(Color glow, List<BakedQuad> quads, PoseStack matrices, SubmitNodeCollector queue, int light, int overlay) {
+        if (quads.isEmpty()) {
+            return;
         }
+        // `putBakedQuad` reads color/light/overlay from a QuadInstance (26.1: `putBulkData` is gone). Color is
+        // white here, the glow layers ignore or override it; the glow-raised light is what the item was lit with.
+        var instance = new QuadInstance();
+        instance.setColor(-1);
+        instance.setLightCoords(light);
+        instance.setOverlayCoords(overlay);
 
-        // This layer carries the luminance: its gain drives the streaks up into the clamp, which the
-        // emissive pass cannot do, since a vertex color has nowhere above 1 to go.
-        var glowing = VertexConsumers.union(vertexConsumers.getBuffer(CustomLayers.itemGlow(glow)), vertices);
+        // The luminance pass: glint program, color x gain through the color modulator, UVs scrolled by the shader.
+        // Its vertex format is POSITION_TEXTURE, so the color/overlay/light/normal of the item quads are dropped.
+        var uvScale = CustomLayers.itemGlowUvScale(quads);
+        queue.submitCustomGeometry(matrices, CustomLayers.itemGlow(glow), (entry, vertexConsumer) -> {
+            VertexConsumer glint = new ItemGlowVertexConsumer(vertexConsumer, Color.WHITE, uvScale, false);
+            for (var quad : quads) {
+                glint.putBakedQuad(entry, quad, instance);
+            }
+        });
 
-        // Bloom is a shader pack's doing, not the game's, and it only blooms what it reads as emissive.
-        // Without a pack, this pass would only wash the item out with a flat coat and buy nothing.
+        // Bloom is a shader pack's doing, and it only blooms what it reads as emissive. Without a pack this
+        // pass would only wash the item out with a flat coat and buy nothing.
         if (ShaderCompatibility.isShaderPackInUse()) {
-            // Opacity is folded into the color, as it is for the shimmer: the blend adds the source
-            // outright, so alpha is not a factor in it, and stacks would otherwise not dim the coat at all.
-            var tint = new Color(
-                    glow.red() * glow.alpha(),
-                    glow.green() * glow.alpha(),
-                    glow.blue() * glow.alpha(),
-                    1F);
-            var emissive = new ItemGlowVertexConsumer(vertexConsumers.getBuffer(CustomLayers.itemGlowEmissive()), tint);
-            glowing = VertexConsumers.union(glowing, emissive);
+            // Opacity folded into the color, as for the shimmer: the additive blend ignores alpha.
+            var tint = new Color(glow.red() * glow.alpha(), glow.green() * glow.alpha(), glow.blue() * glow.alpha(), 1F);
+            queue.submitCustomGeometry(matrices, CustomLayers.itemGlowEmissive(), (entry, vertexConsumer) -> {
+                VertexConsumer emissive = new ItemGlowVertexConsumer(vertexConsumer, tint, uvScale, true);
+                for (var quad : quads) {
+                    emissive.putBakedQuad(entry, quad, instance);
+                }
+            });
         }
-
-        return glowing;
     }
 }

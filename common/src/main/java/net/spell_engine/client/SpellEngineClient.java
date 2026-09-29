@@ -3,19 +3,15 @@ package net.spell_engine.client;
 import me.shedaniel.autoconfig.AutoConfig;
 import me.shedaniel.autoconfig.serializer.JanksonConfigSerializer;
 import me.shedaniel.autoconfig.serializer.PartitioningSerializer;
-import net.minecraft.client.particle.ParticleFactory;
-import net.minecraft.client.particle.SpriteProvider;
-import net.minecraft.client.render.block.entity.BlockEntityRendererFactories;
-import net.minecraft.item.BowItem;
-import net.minecraft.item.CrossbowItem;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.tooltip.TooltipType;
-import net.minecraft.particle.ParticleEffect;
-import net.minecraft.particle.ParticleType;
-import net.minecraft.registry.Registries;
-import net.minecraft.text.Text;
-
 import java.util.List;
+import net.minecraft.client.particle.ParticleProvider;
+import net.minecraft.client.particle.SpriteSet;
+import net.minecraft.client.renderer.blockentity.BlockEntityRenderers;
+import net.minecraft.core.particles.ParticleOptions;
+import net.minecraft.core.particles.ParticleType;
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.TooltipFlag;
 import net.spell_engine.SpellEngineMod;
 import net.spell_engine.api.effect.CustomParticleStatusEffect;
 import net.spell_engine.api.effect.SpellEngineEffects;
@@ -24,6 +20,7 @@ import net.spell_engine.api.render.BuffParticleSpawner;
 import net.spell_engine.api.render.StunParticleSpawner;
 import net.spell_engine.api.spell.fx.ParticleGroupBuilder;
 import net.spell_engine.api.spell.fx.ParticleGroup;
+import net.spell_engine.client.animation.SpellAnimationStack;
 import net.spell_engine.client.compatibility.CompatFeatures;
 import net.spell_engine.client.gui.SpellTooltip;
 import net.spell_engine.client.particle.*;
@@ -55,9 +52,11 @@ public class SpellEngineClient {
         AutoConfig.register(ClientConfigWrapper.class, PartitioningSerializer.wrap(JanksonConfigSerializer::new));
         config = AutoConfig.getConfigHolder(ClientConfigWrapper.class).getConfig().client;
         hudConfig.refresh();
+        SpellAnimationStack.registerFactories();
 
-        BlockEntityRendererFactories.register(SpellBindingBlockEntity.ENTITY_TYPE, SpellBindingBlockEntityRenderer::new);
+        BlockEntityRenderers.register(SpellBindingBlockEntity.ENTITY_TYPE, SpellBindingBlockEntityRenderer::new);
         CompatFeatures.initialize();
+        net.spell_engine.client.compatibility.IrisCompatibility.assignPipelines();
         registerEffectParticles();
         ModelEffectOperations.registerDefaults();
 
@@ -68,37 +67,29 @@ public class SpellEngineClient {
 
     @FunctionalInterface
     public interface ParticleAppearanceRegistrar {
-        <T extends ParticleEffect> void register(ParticleType<T> type, SpriteFactory<T> factory);
+        <T extends ParticleOptions> void register(ParticleType<T> type, SpriteFactory<T> factory);
     }
 
     /// Loader-neutral equivalent of the vanilla (private) `ParticleManager.SpriteAwareFactory` and
     /// Fabric's `PendingParticleFactory`: builds a particle factory from a sprite provider.
     @FunctionalInterface
-    public interface SpriteFactory<T extends ParticleEffect> {
-        ParticleFactory<T> create(SpriteProvider spriteProvider);
+    public interface SpriteFactory<T extends ParticleOptions> {
+        ParticleProvider<T> create(SpriteSet spriteProvider);
     }
 
     /// Ran once the client has started (registries frozen). Fabric: `ClientLifecycleEvents.CLIENT_STARTED`;
     /// NeoForge: `FMLClientSetupEvent`.
     public static void onClientStarted() {
-        injectRangedWeaponModelPredicates();
+        // Ranged weapon spells animate the held bow's draw through the vanilla item model
+        // properties (`minecraft:using_item`, `minecraft:use_duration`, `minecraft:crossbow/pull`),
+        // see the `client.render.item` mixins and `RangedWeaponCastAnimation`. Ranged Weapon API
+        // weapons use the same vanilla definitions, so nothing has to be installed here.
     }
 
     /// Append Spell Engine tooltip lines. Fabric: `ItemTooltipCallback`; NeoForge: `ItemTooltipEvent`.
-    public static void addTooltipLines(ItemStack itemStack, TooltipType tooltipType, List<Text> lines) {
+    public static void addTooltipLines(ItemStack itemStack, TooltipFlag tooltipType, List<Component> lines) {
         SpellTooltip.addSpellLines(itemStack, tooltipType, lines);
         EquipmentSetTooltip.appendLines(itemStack, lines);
-    }
-
-    private static void injectRangedWeaponModelPredicates() {
-        for(var itemId: Registries.ITEM.getIds()) {
-            var item = Registries.ITEM.get(itemId);
-            if (item instanceof BowItem) {
-                ModelPredicateHelper.injectBowSkillUsePredicate(item);
-            } else if (item instanceof CrossbowItem) {
-                ModelPredicateHelper.injectCrossBowSkillUsePredicate(item);
-            }
-        }
     }
 
     private static void registerEffectParticles() {
@@ -133,7 +124,7 @@ public class SpellEngineClient {
         // resolved from the entry's defaults + the spawning effect's payload.
         for (var entry: SpellEngineParticles.entries()) {
             registrar.register(entry.type(),
-                    (SpriteProvider provider) -> new SpellParticle.Factory(provider, entry));
+                    (SpriteSet provider) -> new SpellParticle.Factory(provider, entry));
         }
     }
 }
